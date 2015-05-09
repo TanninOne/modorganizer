@@ -95,7 +95,9 @@ SOURCES += \
     organizerproxy.cpp \
     viewmarkingscrollbar.cpp \
     plugincontainer.cpp \
-    organizercore.cpp
+    organizercore.cpp \
+    acfparser.cpp \
+    modfeatures.cpp
 
 
 HEADERS  += \
@@ -177,7 +179,9 @@ HEADERS  += \
     viewmarkingscrollbar.h \
     plugincontainer.h \
     organizercore.h \
-    iuserinterface.h
+    iuserinterface.h \
+    acfparser.h \
+    modfeatures.h
 
 FORMS    += \
     transfersavesdialog.ui \
@@ -273,8 +277,15 @@ CONFIG(debug, debug|release) {
   LIBS += -L$$OUT_PWD/../bsatk/release
   LIBS += -L$$OUT_PWD/../uibase/release
   LIBS += -L$$OUT_PWD/../boss_modified/release
-  QMAKE_CXXFLAGS += /Zi /GL
-  QMAKE_LFLAGS += /DEBUG /LTCG /OPT:REF /OPT:ICF
+  QMAKE_CXXFLAGS += /Zi
+  QMAKE_LFLAGS += /DEBUG
+
+  isEmpty($$(IDEBUILD)) {
+    QMAKE_CXXFLAGS += /GL
+    QMAKE_LFLAGS +=  /LTCG /OPT:REF /OPT:ICF
+  }
+
+
   PRE_TARGETDEPS += \
     $$OUT_PWD/../shared/release/mo_shared.lib \
     $$OUT_PWD/../bsatk/release/bsatk.lib

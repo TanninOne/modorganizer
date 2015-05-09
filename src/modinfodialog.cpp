@@ -43,6 +43,7 @@ along with Mod Organizer.  If not, see <http://www.gnu.org/licenses/>.
 
 using namespace MOBase;
 using namespace MOShared;
+using namespace ModFeature;
 
 
 class ModFileListWidget : public QListWidgetItem {
@@ -61,11 +62,17 @@ static bool operator<(const ModFileListWidget &LHS, const ModFileListWidget &RHS
 }
 
 
-ModInfoDialog::ModInfoDialog(ModInfo::Ptr modInfo, const DirectoryEntry *directory, bool unmanaged, QWidget *parent)
-  : TutorableDialog("ModInfoDialog", parent), ui(new Ui::ModInfoDialog), m_ModInfo(modInfo),
-  m_ThumbnailMapper(this), m_RequestStarted(false),
-  m_DeleteAction(nullptr), m_RenameAction(nullptr), m_OpenAction(nullptr),
-  m_Directory(directory), m_Origin(nullptr)
+ModInfoDialog::ModInfoDialog(ModInfo::Ptr modInfo, const DirectoryEntry *directory, QWidget *parent)
+  : TutorableDialog("ModInfoDialog", parent)
+  , ui(new Ui::ModInfoDialog)
+  , m_ModInfo(modInfo)
+  , m_ThumbnailMapper(this)
+  , m_RequestStarted(false)
+  , m_DeleteAction(nullptr)
+  , m_RenameAction(nullptr)
+  , m_OpenAction(nullptr)
+  , m_Directory(directory)
+  , m_Origin(nullptr)
 {
   ui->setupUi(this);
   this->setWindowTitle(modInfo->name());
@@ -78,13 +85,29 @@ ModInfoDialog::ModInfoDialog(ModInfo::Ptr modInfo, const DirectoryEntry *directo
 
   QLineEdit *modIDEdit = findChild<QLineEdit*>("modIDEdit");
   ui->modIDEdit->setValidator(new QIntValidator(modIDEdit));
-  ui->modIDEdit->setText(QString("%1").arg(modInfo->getNexusID()));
 
-  ui->notesEdit->setText(modInfo->notes());
+  Repository *repo = modInfo->feature<Repository>();
+  if (repo != nullptr) {
+    ui->modIDEdit->setText(repo->modId());
+  } else {
+    ui->modIDEdit->setEnabled(false);
+  }
+
+  {
+    Note *note = modInfo->feature<Note>();
+
+    if (note != nullptr) {
+      ui->notesEdit->setText(note->get());
+    } else {
+      ui->notesEdit->setEnabled(false);
+    }
+  }
 
   connect(&m_ThumbnailMapper, SIGNAL(mapped(const QString&)), this, SIGNAL(thumbnailClickedSignal(const QString&)));
   connect(this, SIGNAL(thumbnailClickedSignal(const QString&)), this, SLOT(thumbnailClicked(const QString&)));
-  connect(m_ModInfo.data(), SIGNAL(modDetailsUpdated(bool)), this, SLOT(modDetailsUpdated(bool)));
+  if (repo != nullptr) {
+    connect(repo, SIGNAL(modDetailsUpdated(bool)), this, SLOT(modDetailsUpdated(bool)));
+  }
   connect(ui->descriptionView, SIGNAL(linkClicked(QUrl)), this, SLOT(linkClicked(QUrl)));
   ui->descriptionView->page()->setLinkDelegationPolicy(QWebPage::DelegateAllLinks);
 
@@ -97,24 +120,35 @@ ModInfoDialog::ModInfoDialog(ModInfo::Ptr modInfo, const DirectoryEntry *directo
 
   refreshLists();
 
-  if (unmanaged) {
-    ui->tabWidget->setTabEnabled(TAB_INIFILES, false);
-    ui->tabWidget->setTabEnabled(TAB_CATEGORIES, false);
-    ui->tabWidget->setTabEnabled(TAB_NEXUS, false);
-    ui->tabWidget->setTabEnabled(TAB_FILETREE, false);
-    ui->tabWidget->setTabEnabled(TAB_NOTES, false);
-    ui->tabWidget->setTabEnabled(TAB_ESPS, false);
-    ui->tabWidget->setTabEnabled(TAB_TEXTFILES, false);
-    ui->tabWidget->setTabEnabled(TAB_IMAGES, false);
-  } else {
+  if (modInfo->hasFeature<Installed>()) {
     initFiletree(modInfo);
-    addCategories(CategoryFactory::instance(), modInfo->getCategories(), ui->categoriesTree->invisibleRootItem(), 0);
-    refreshPrimaryCategoriesBox();
+    initINITweaks();
     ui->tabWidget->setTabEnabled(TAB_TEXTFILES, ui->textFileList->count() != 0);
     ui->tabWidget->setTabEnabled(TAB_IMAGES, ui->thumbnailArea->count() != 0);
     ui->tabWidget->setTabEnabled(TAB_ESPS, (ui->inactiveESPList->count() != 0) || (ui->activeESPList->count() != 0));
+  } else {
+    ui->tabWidget->setTabEnabled(TAB_INIFILES, false);
+    ui->tabWidget->setTabEnabled(TAB_TEXTFILES, false);
+    ui->tabWidget->setTabEnabled(TAB_IMAGES, false);
+    ui->tabWidget->setTabEnabled(TAB_FILETREE, false);
+    ui->tabWidget->setTabEnabled(TAB_NOTES, false);
+    ui->tabWidget->setTabEnabled(TAB_ESPS, false);
   }
-  initINITweaks();
+
+  if (modInfo->hasFeature<Categorized>()) {
+    Categorized *categorized = modInfo->feature<Categorized>();
+    if (categorized != nullptr) {
+      addCategories(CategoryFactory::instance(), categorized->getCategories(),
+                    ui->categoriesTree->invisibleRootItem(), 0);
+      refreshPrimaryCategoriesBox(categorized);
+    }
+  } else {
+    ui->tabWidget->setTabEnabled(TAB_CATEGORIES, false);
+  }
+
+  if (!modInfo->hasFeature<Repository>()) {
+    ui->tabWidget->setTabEnabled(TAB_NEXUS, false);
+  }
 
   ui->tabWidget->setTabEnabled(TAB_CONFLICTS, m_Origin != nullptr);
 
@@ -122,8 +156,11 @@ ModInfoDialog::ModInfoDialog(ModInfo::Ptr modInfo, const DirectoryEntry *directo
     activateNexusTab();
   }
 
-  ui->endorseBtn->setEnabled((m_ModInfo->endorsedState() == ModInfo::ENDORSED_FALSE) ||
-                             (m_ModInfo->endorsedState() == ModInfo::ENDORSED_NEVER));
+  Endorsable *endorsable = m_ModInfo->feature<Endorsable>();
+  if (endorsable != nullptr) {
+    ui->endorseBtn->setEnabled((endorsable->endorsedState() == Endorsable::ENDORSED_FALSE) ||
+                               (endorsable->endorsedState() == Endorsable::ENDORSED_NEVER));
+  }
 
   // activate first enabled tab
   for (int i = 0; i < ui->tabWidget->count(); ++i) {
@@ -137,7 +174,10 @@ ModInfoDialog::ModInfoDialog(ModInfo::Ptr modInfo, const DirectoryEntry *directo
 
 ModInfoDialog::~ModInfoDialog()
 {
-  m_ModInfo->setNotes(ui->notesEdit->toPlainText());
+  Note *note = m_ModInfo->feature<Note>();
+  if (note != nullptr) {
+    note->set(ui->notesEdit->toPlainText());
+  }
   saveCategories(ui->categoriesTree->invisibleRootItem());
   saveIniTweaks(); // ini tweaks are written to the ini file directly. This is the only information not managed by ModInfo
   delete ui;
@@ -345,7 +385,6 @@ void ModInfoDialog::refreshLists()
   ui->noConflictCount->display(numNonConflicting);
 }
 
-
 void ModInfoDialog::addCategories(const CategoryFactory &factory, const std::set<int> &enabledCategories, QTreeWidgetItem *root, int rootLevel)
 {
   for (unsigned int i = 0; i < factory.numCategories(); ++i) {
@@ -364,16 +403,17 @@ void ModInfoDialog::addCategories(const CategoryFactory &factory, const std::set
   }
 }
 
-
 void ModInfoDialog::saveCategories(QTreeWidgetItem *currentNode)
 {
   for (int i = 0; i < currentNode->childCount(); ++i) {
     QTreeWidgetItem *childNode = currentNode->child(i);
-    m_ModInfo->setCategory(childNode->data(0, Qt::UserRole).toInt(), childNode->checkState(0));
+    Categorized *categorized = m_ModInfo->feature<Categorized>();
+    if (categorized != nullptr) {
+      categorized->set(childNode->data(0, Qt::UserRole).toInt(), childNode->checkState(0));
+    }
     saveCategories(childNode);
   }
 }
-
 
 void ModInfoDialog::on_closeButton_clicked()
 {
@@ -382,13 +422,10 @@ void ModInfoDialog::on_closeButton_clicked()
   }
 }
 
-
-
 QString ModInfoDialog::getModVersion() const
 {
   return m_Settings->value("version", "").toString();
 }
-
 
 const int ModInfoDialog::getModID() const
 {
@@ -697,18 +734,29 @@ void ModInfoDialog::linkClicked(const QUrl &url)
   }
 }
 
-
 void ModInfoDialog::refreshNexusData(int modID)
 {
   if ((!m_RequestStarted) && (modID > 0)) {
     m_RequestStarted = true;
 
-    m_ModInfo->updateNXMInfo();
-
-    MessageDialog::showMessage(tr("Info requested, please wait"), this);
+    Repository *repo = m_ModInfo->feature<Repository>();
+    if (repo != nullptr) {
+      repo->updateInfo();
+      MessageDialog::showMessage(tr("Info requested, please wait"), this);
+    }
   }
 }
 
+void ModInfoDialog::refreshRepositoryData(Repository *repo)
+{
+  if (repo->name() == "nexus") {
+    refreshNexusData(repo->modId().toInt());
+  } else if (repo->name() == "steam") {
+    qDebug("refresh steam data");
+  } else {
+    qWarning("unsupported repository");
+  }
+}
 
 /*void ModInfoDialog::nxmDescriptionAvailable(int, QVariant, QVariant resultData, int requestID)
 {
@@ -771,56 +819,39 @@ QString ModInfoDialog::getFileCategory(int categoryID)
 
 void ModInfoDialog::updateVersionColor()
 {
-//  QPalette versionColor;
-  if (m_ModInfo->getVersion() != m_ModInfo->getNewestVersion()) {
-    ui->versionEdit->setStyleSheet("color: red");
-//    versionColor.setColor(QPalette::Text, Qt::red);
-    ui->versionEdit->setToolTip(tr("Current Version: %1").arg(m_ModInfo->getNewestVersion().canonicalString()));
-  } else {
-    ui->versionEdit->setStyleSheet("color: green");
-//    versionColor.setColor(QPalette::Text, Qt::green);
-    ui->versionEdit->setToolTip(tr("No update available"));
+  Versioned *versioned = m_ModInfo->feature<Versioned>();
+  Repository *repository = m_ModInfo->feature<Repository>();
+
+  if ((versioned != nullptr) && (repository != nullptr)) {
+    if (versioned->get() != repository->version()) {
+      ui->versionEdit->setStyleSheet("color: red");
+      ui->versionEdit->setToolTip(
+            tr("Current Version: %1").arg(repository->version().canonicalString()));
+    } else {
+      ui->versionEdit->setStyleSheet("color: green");
+      ui->versionEdit->setToolTip(tr("No update available"));
+    }
   }
-//  ui->versionEdit->setPalette(versionColor);
 }
 
 
 void ModInfoDialog::modDetailsUpdated(bool success)
 {
   if (success) {
-    QString nexusDescription = m_ModInfo->getNexusDescription();
-    if (!nexusDescription.isEmpty()) {
-  /*    QString input =
-         "[size=20]sizetest[/size]\r\n"
-          "[COLOR=yellow]colortest[/COLOR]\r\n"
-          "[center]centertest[/center]\r\n"
-          "[quote]quotetest 1[/quote]\r\n"
-          "[quote=bla]quotetest 2[/quote]\r\n"
-          "[url]www.skyrimnexus.com[/url]\r\n"
-          "[url=www.skyrimnexus.com]urltest 2[/url]\r\n"
-          "[ol]\r\n"
-          "[li]item 2[/li]"
-          "[*]item 1\r\n"
-          "[/ol]\r\n"
-          "[img]http://www.bbcode.org/images/bbcode_logo.png[/img]\r\n"
-          "[table][tr][th]headertest1[/th]"
-          "[th]headertest2[/th][/tr]"
-          "[tr][td]rowtest11[/td][td]rowtest12[/td][/tr]"
-          "[tr][td]rowtest21[/td][td]rowtest22[/td][/tr][/table]"
-          "[email=\"sherb@gmx.net\"]mail me[/email]";
-      ui->descriptionView->setHtml(BBCode::convertToHTML(input));*/
+    Repository *repo = m_ModInfo->feature<Repository>();
+    if (repo != nullptr) {
+      QString nexusDescription = repo->description();
+      if (!nexusDescription.isEmpty()) {
+        QString descriptionAsHTML =
+            QString("<html>"
+                      "<head><style>body {background: #707070; } a { color: #5EA2E5; }</style></head>"
+                      "<body>%1</body>"
+                    "</html>").arg(BBCode::convertToHTML(nexusDescription));
 
-      QString descriptionAsHTML =
-          QString("<html>"
-                    "<head><style>body {background: #707070; } a { color: #5EA2E5; }</style></head>"
-                    "<body>%1</body>"
-                  "</html>").arg(BBCode::convertToHTML(nexusDescription));
-
-  //    QString descriptionAsHTML = BBCode::convertToHTML(result["description"].toString());
-      ui->descriptionView->setHtml(descriptionAsHTML);
-    } else {
-  //    ui->descriptionView->setHtml(result["summary"].toString().append(QString("\r\n") + tr("(description incomplete, please visit nexus)")));
-      ui->descriptionView->setHtml(tr("(description incomplete, please visit nexus)"));
+        ui->descriptionView->setHtml(descriptionAsHTML);
+      } else {
+        ui->descriptionView->setHtml(tr("(description incomplete, please visit nexus)"));
+      }
     }
 
     updateVersionColor();
@@ -831,19 +862,22 @@ void ModInfoDialog::modDetailsUpdated(bool success)
 void ModInfoDialog::activateNexusTab()
 {
   QLineEdit *modIDEdit = findChild<QLineEdit*>("modIDEdit");
-  int modID = modIDEdit->text().toInt();
-  if (modID != 0) {
-    QString nexusLink = QString("%1/downloads/file.php?id=%2").arg(ToQString(GameInfo::instance().getNexusPage(false))).arg(modID);
+  int modId = modIDEdit->text().toInt();
+  if (modId != 0) {
+    QString nexusLink = QString("%1/downloads/file.php?id=%2").arg(ToQString(GameInfo::instance().getNexusPage(false))).arg(modId);
     QLabel *visitNexusLabel = findChild<QLabel*>("visitNexusLabel");
     visitNexusLabel->setText(tr("<a href=\"%1\">Visit on Nexus</a>").arg(nexusLink));
     visitNexusLabel->setToolTip(nexusLink);
 
+    Repository *repo = m_ModInfo->feature<Repository>();
 
-    if (m_ModInfo->getNexusDescription().isEmpty() ||
-        QDateTime::currentDateTime() > m_ModInfo->getLastNexusQuery().addDays(1)) {
-      refreshNexusData(modID);
-    } else {
-      this->modDetailsUpdated(true);
+    if (repo != nullptr) {
+      if (repo->description().isEmpty()
+          || QDateTime::currentDateTime() > repo->lastQueryTime().addDays(1)) {
+        refreshRepositoryData(repo);
+      } else {
+        this->modDetailsUpdated(true);
+      }
     }
   }
   QLineEdit *versionEdit = findChild<QLineEdit*>("versionEdit");
@@ -865,7 +899,7 @@ void ModInfoDialog::on_modIDEdit_editingFinished()
   int oldID = m_Settings->value("modid", 0).toInt();
   int modID = ui->modIDEdit->text().toInt();
   if (oldID != modID){
-    m_ModInfo->setNexusID(modID);
+    m_ModInfo->setRepoModID(modID);
 
     ui->descriptionView->setHtml("");
     if (modID != 0) {
@@ -1070,9 +1104,11 @@ void ModInfoDialog::on_categoriesTree_itemChanged(QTreeWidgetItem *item, int)
     parent->setCheckState(0, Qt::Checked);
     parent = parent->parent();
   }
-  refreshPrimaryCategoriesBox();
+  Categorized *cat = m_ModInfo->feature<Categorized>();
+  if (cat != nullptr) {
+    refreshPrimaryCategoriesBox(cat);
+  }
 }
-
 
 void ModInfoDialog::addCheckedCategories(QTreeWidgetItem *tree)
 {
@@ -1085,11 +1121,10 @@ void ModInfoDialog::addCheckedCategories(QTreeWidgetItem *tree)
   }
 }
 
-
-void ModInfoDialog::refreshPrimaryCategoriesBox()
+void ModInfoDialog::refreshPrimaryCategoriesBox(Categorized *categorized)
 {
   ui->primaryCategoryBox->clear();
-  int primaryCategory = m_ModInfo->getPrimaryCategory();
+  int primaryCategory = categorized->primary();
   addCheckedCategories(ui->categoriesTree->invisibleRootItem());
   for (int i = 0; i < ui->primaryCategoryBox->count(); ++i) {
     if (ui->primaryCategoryBox->itemData(i).toInt() == primaryCategory) {
@@ -1099,21 +1134,21 @@ void ModInfoDialog::refreshPrimaryCategoriesBox()
   }
 }
 
-
 void ModInfoDialog::on_primaryCategoryBox_currentIndexChanged(int index)
 {
   if (index != -1) {
-    m_ModInfo->setPrimaryCategory(ui->primaryCategoryBox->itemData(index).toInt());
+    Categorized *categorized = m_ModInfo->feature<Categorized>();
+    if (categorized != nullptr) {
+      categorized->setPrimary(ui->primaryCategoryBox->itemData(index).toInt());
+    }
   }
 }
-
 
 void ModInfoDialog::on_overwriteTree_itemDoubleClicked(QTreeWidgetItem *item, int)
 {
   this->close();
   emit modOpen(item->data(1, Qt::UserRole).toString(), TAB_CONFLICTS);
 }
-
 
 bool ModInfoDialog::hideFile(const QString &oldName)
 {
@@ -1208,9 +1243,12 @@ void ModInfoDialog::on_overwrittenTree_itemDoubleClicked(QTreeWidgetItem *item, 
 
 void ModInfoDialog::on_refreshButton_clicked()
 {
-  m_ModInfo->updateNXMInfo();
+  Repository *repo = m_ModInfo->feature<Repository>();
+  if (repo != nullptr) {
+    repo->updateInfo();
 
-  MessageDialog::showMessage(tr("Info requested, please wait"), this);
+    MessageDialog::showMessage(tr("Info requested, please wait"), this);
+  }
 }
 
 void ModInfoDialog::on_endorseBtn_clicked()

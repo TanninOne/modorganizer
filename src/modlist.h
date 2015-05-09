@@ -242,7 +242,7 @@ private:
 
   QVariant getOverwriteData(int column, int role) const;
 
-  QString getFlagText(ModInfo::EFlag flag, ModInfo::Ptr modInfo) const;
+  QString getFlagText(EModFlag flag, ModInfo::Ptr modInfo) const;
 
   static QString getColumnToolTip(int column);
 

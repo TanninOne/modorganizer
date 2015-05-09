@@ -323,6 +323,62 @@ QString determineProfile(QStringList arguments, const QSettings &settings)
   return selectedProfileName;
 }
 
+
+QString determineGamePath(const QApplication &application,
+                          QSettings &settings,
+                          const std::vector<IPluginGame*> &gamePlugins)
+{
+  QString gamePath = QString::fromUtf8(settings.value("gamePath", "").toByteArray());
+  bool done = false;
+  while (!done) {
+    if (!GameInfo::init(ToWString(application.applicationDirPath()),
+                        ToWString(application.property("dataPath").toString()),
+                        ToWString(QDir::toNativeSeparators(gamePath)))) {
+      if (!gamePath.isEmpty()) {
+        reportError(QObject::tr("No game identified in \"%1\". The directory is required to contain "
+                                "the game binary and its launcher.").arg(gamePath));
+      }
+      SelectionDialog selection(QObject::tr("Please select the game to manage"), nullptr, QSize(32, 32));
+
+      for (const IPluginGame * const game : gamePlugins) {
+        if (game->isInstalled()) {
+          QString path = game->gameDirectory().absolutePath();
+          selection.addChoice(game->gameIcon(), game->gameName(), path, path);
+        }
+      }
+
+      selection.addChoice(QString("Browse..."), QString(), QString());
+
+      if (selection.exec() == QDialog::Rejected) {
+        gamePath = "";
+        done = true;
+      } else {
+        gamePath = QDir::cleanPath(selection.getChoiceData().toString());
+        if (gamePath.isEmpty()) {
+          gamePath = QFileDialog::getExistingDirectory(
+                nullptr, QObject::tr("Please select the game to manage"), QString(),
+                QFileDialog::ShowDirsOnly);
+          qDebug() << "manually selected path " << gamePath;
+        }
+      }
+    } else {
+      done = true;
+      gamePath = ToQString(GameInfo::instance().getGameDirectory());
+    }
+  }
+
+  if (gamePath.isEmpty()) {
+    // game not found and user canceled
+    return -1;
+  } else if (gamePath.length() != 0) {
+    // user selected a folder and game was initialised with it
+    qDebug("game path: %s", qPrintable(gamePath));
+    settings.setValue("gamePath", gamePath.toUtf8().constData());
+  }
+  return gamePath;
+}
+
+
 int main(int argc, char *argv[])
 {
   MOApplication application(argc, argv);
@@ -436,52 +492,7 @@ int main(int argc, char *argv[])
     PluginContainer pluginContainer(&organizer);
     pluginContainer.loadPlugins();
 
-    QString gamePath = QString::fromUtf8(settings.value("gamePath", "").toByteArray());
-    bool done = false;
-    while (!done) {
-      if (!GameInfo::init(ToWString(application.applicationDirPath()), ToWString(dataPath), ToWString(QDir::toNativeSeparators(gamePath)))) {
-        if (!gamePath.isEmpty()) {
-          reportError(QObject::tr("No game identified in \"%1\". The directory is required to contain "
-                                  "the game binary and its launcher.").arg(gamePath));
-        }
-        SelectionDialog selection(QObject::tr("Please select the game to manage"), nullptr, QSize(32, 32));
-
-        for (const IPluginGame * const game : pluginContainer.plugins<IPluginGame>()) {
-          if (game->isInstalled()) {
-            QString path = game->gameDirectory().absolutePath();
-            selection.addChoice(game->gameIcon(), game->gameName(), path, path);
-          }
-        }
-
-        selection.addChoice(QString("Browse..."), QString(), QString());
-
-        if (selection.exec() == QDialog::Rejected) {
-          gamePath = "";
-          done = true;
-        } else {
-          gamePath = QDir::cleanPath(selection.getChoiceData().toString());
-          if (gamePath.isEmpty()) {
-            gamePath = QFileDialog::getExistingDirectory(
-                  nullptr, QObject::tr("Please select the game to manage"), QString(),
-                  QFileDialog::ShowDirsOnly);
-            qDebug() << "manually selected path " << gamePath;
-          }
-        }
-      } else {
-        done = true;
-        gamePath = ToQString(GameInfo::instance().getGameDirectory());
-      }
-    }
-
-    if (gamePath.isEmpty()) {
-      // game not found and user canceled
-      return -1;
-    } else if (gamePath.length() != 0) {
-      // user selected a folder and game was initialised with it
-      qDebug("game path: %s", qPrintable(gamePath));
-      settings.setValue("gamePath", gamePath.toUtf8().constData());
-    }
-
+    QString gamePath = determineGamePath(application, settings, pluginContainer.plugins<IPluginGame>());
     organizer.setManagedGame(ToQString(GameInfo::instance().getGameName()), gamePath);
 
     organizer.createDefaultProfile();

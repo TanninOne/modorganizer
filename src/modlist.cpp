@@ -49,6 +49,8 @@ along with Mod Organizer.  If not, see <http://www.gnu.org/licenses/>.
 
 using namespace MOBase;
 
+using namespace MOBase::ModFeature;
+
 
 ModList::ModList(QObject *parent)
   : QAbstractItemModel(parent)
@@ -132,17 +134,21 @@ QVariant ModList::getOverwriteData(int column, int role) const
 }
 
 
-QString ModList::getFlagText(ModInfo::EFlag flag, ModInfo::Ptr modInfo) const
+QString ModList::getFlagText(EModFlag flag, ModInfo::Ptr modInfo) const
 {
+  Note *note = modInfo->feature<Note>();
   switch (flag) {
-    case ModInfo::FLAG_BACKUP: return tr("Backup");
-    case ModInfo::FLAG_INVALID: return tr("No valid game data");
-    case ModInfo::FLAG_NOTENDORSED: return tr("Not endorsed yet");
-    case ModInfo::FLAG_NOTES: return QString("<i>%1</i>").arg(modInfo->notes().replace("\n", "<br>"));
-    case ModInfo::FLAG_CONFLICT_OVERWRITE: return tr("Overwrites files");
-    case ModInfo::FLAG_CONFLICT_OVERWRITTEN: return tr("Overwritten files");
-    case ModInfo::FLAG_CONFLICT_MIXED: return tr("Overwrites & Overwritten");
-    case ModInfo::FLAG_CONFLICT_REDUNDANT: return tr("Redundant");
+    case EModFlag::BACKUP: return tr("Backup");
+    case EModFlag::INVALID: return tr("No valid game data");
+    case EModFlag::NOTENDORSED: return tr("Not endorsed yet");
+    case EModFlag::NOTES: {
+      return note != nullptr ? QString()
+                             : QString("<i>%1</i>").arg(note->get().replace("\n", "<br>"));
+    } break;
+    case EModFlag::CONFLICT_OVERWRITE: return tr("Overwrites files");
+    case EModFlag::CONFLICT_OVERWRITTEN: return tr("Overwritten files");
+    case EModFlag::CONFLICT_MIXED: return tr("Overwrites & Overwritten");
+    case EModFlag::CONFLICT_REDUNDANT: return tr("Redundant");
     default: return "";
   }
 }
@@ -178,7 +184,6 @@ QString ModList::contentsToToolTip(const std::vector<ModInfo::EContent> &content
   return result;
 }
 
-
 QVariant ModList::data(const QModelIndex &modelIndex, int role) const
 {
   if (m_Profile == nullptr) return QVariant();
@@ -187,6 +192,12 @@ QVariant ModList::data(const QModelIndex &modelIndex, int role) const
   int column = modelIndex.column();
 
   ModInfo::Ptr modInfo = ModInfo::getByIndex(modIndex);
+
+  Repository *repository = modInfo->feature<Repository>();
+  Versioned *versioned = modInfo->feature<Versioned>();
+  Positioning *position = modInfo->feature<Positioning>();
+  Categorized *categorized = modInfo->feature<Categorized>();
+
   if ((role == Qt::DisplayRole) ||
       (role == Qt::EditRole)) {
     if ((column == COL_FLAGS)
@@ -195,67 +206,65 @@ QVariant ModList::data(const QModelIndex &modelIndex, int role) const
     } else if (column == COL_NAME) {
       return modInfo->name();
     } else if (column == COL_VERSION) {
-      VersionInfo verInfo = modInfo->getVersion();
-      QString version = verInfo.displayString();
-      if (role != Qt::EditRole) {
-        if (version.isEmpty() && modInfo->canBeUpdated()) {
-          version = "?";
+      if (versioned != nullptr) {
+        VersionInfo verInfo = versioned->get();
+        QString version = verInfo.displayString();
+        if (role != Qt::EditRole) {
+          if (version.isEmpty() && modInfo->canBeUpdated()) {
+            version = "?";
+          }
+        }
+        return version;
+      }
+    } else if (column == COL_PRIORITY) {
+      if (position != nullptr) {
+        if (!position->isPositionFixed()) {
+          return m_Profile->getModPriority(modIndex);
         }
       }
-      return version;
-    } else if (column == COL_PRIORITY) {
-      int priority = modInfo->getFixedPriority();
-      if (priority != INT_MIN) {
-        return QVariant(); // hide priority for mods where it's fixed
-      } else {
-        return m_Profile->getModPriority(modIndex);
-      }
     } else if (column == COL_MODID) {
-      int modID = modInfo->getNexusID();
-      if (modID >= 0) {
-        return modID;
-      } else {
-        return QVariant();
+      if (repository != nullptr) {
+        QString modID = repository->modId();
+        if (modID.isEmpty()) {
+          return modID;
+        }
       }
     } else if (column == COL_CATEGORY) {
-      if (modInfo->hasFlag(ModInfo::FLAG_FOREIGN)) {
+      if (modInfo->hasFlag(EModFlag::FOREIGN)) {
         return tr("Non-MO");
       } else {
-        int category = modInfo->getPrimaryCategory();
-        if (category != -1) {
-          CategoryFactory &categoryFactory = CategoryFactory::instance();
-          if (categoryFactory.categoryExists(category)) {
-            try {
-              int categoryIdx = categoryFactory.getCategoryIndex(category);
-              return categoryFactory.getCategoryName(categoryIdx);
-            } catch (const std::exception &e) {
-              qCritical("failed to retrieve category name: %s", e.what());
-              return QString();
+
+        if (categorized != nullptr) {
+          int category = categorized->primary();
+          if (category != -1) {
+            CategoryFactory &categoryFactory = CategoryFactory::instance();
+            if (categoryFactory.categoryExists(category)) {
+              try {
+                int categoryIdx = categoryFactory.getCategoryIndex(category);
+                return categoryFactory.getCategoryName(categoryIdx);
+              } catch (const std::exception &e) {
+                qCritical("failed to retrieve category name: %s", e.what());
+              }
+            } else {
+              qWarning("category %d doesn't exist (may have been removed)", category);
+              categorized->set(category, false);
             }
-          } else {
-            qWarning("category %d doesn't exist (may have been removed)", category);
-            modInfo->setCategory(category, false);
-            return QString();
           }
-        } else {
-          return QVariant();
         }
       }
     } else if (column == COL_INSTALLTIME) {
       // display installation time for mods that can be updated
       if (modInfo->canBeUpdated()) {
         return modInfo->creationTime();
-      } else {
-        return QVariant();
       }
     } else {
       return tr("invalid");
     }
   } else if ((role == Qt::CheckStateRole) && (column == 0)) {
-    if (modInfo->canBeEnabled()) {
-      return m_Profile->modEnabled(modIndex) ? Qt::Checked : Qt::Unchecked;
-    } else {
-      return QVariant();
+    Positioning *positioning = modInfo->feature<Positioning>();
+    if ((positioning != nullptr)
+          && (positioning->checkable() == Positioning::ECheckable::USER_CHECKABLE)) {
+        return m_Profile->modEnabled(modIndex) ? Qt::Checked : Qt::Unchecked;
     }
   } else if (role == Qt::TextAlignmentRole) {
     if (column == COL_NAME) {
@@ -271,26 +280,34 @@ QVariant ModList::data(const QModelIndex &modelIndex, int role) const
     }
   } else if (role == Qt::UserRole) {
     if (column == COL_CATEGORY) {
-      QVariantList categoryNames;
-      std::set<int> categories = modInfo->getCategories();
-      CategoryFactory &categoryFactory = CategoryFactory::instance();
-      for (auto iter = categories.begin(); iter != categories.end(); ++iter) {
-        categoryNames.append(categoryFactory.getCategoryName(categoryFactory.getCategoryIndex(*iter)));
-      }
-      if (categoryNames.count() != 0) {
-        return categoryNames;
+      if (categorized != nullptr) {
+        QVariantList categoryNames;
+        std::set<int> categories = categorized->getCategories();
+        CategoryFactory &categoryFactory = CategoryFactory::instance();
+        for (auto iter = categories.begin(); iter != categories.end(); ++iter) {
+          categoryNames.append(categoryFactory.getCategoryName(categoryFactory.getCategoryIndex(*iter)));
+        }
+        if (categoryNames.count() != 0) {
+          return categoryNames;
+        }
       } else {
-        return QVariant();
+        return QVariantList();
       }
     } else if (column == COL_PRIORITY) {
-      int priority = modInfo->getFixedPriority();
-      if (priority != INT_MIN) {
-        return priority;
-      } else {
-        return m_Profile->getModPriority(modIndex);
+      if (position != nullptr) {
+        switch (position->position()) {
+          case Positioning::EPosition::USER_POSITIONABLE:
+            return m_Profile->getModPriority(modIndex);
+          case Positioning::EPosition::FIXED_HIGHEST:
+            return INT_MAX;
+          case Positioning::EPosition::FIXED_LOWEST:
+            return INT_MIN;
+        }
       }
     } else {
-      return modInfo->getNexusID();
+      if (repository != nullptr) {
+        return repository->modId();
+      }
     }
   } else if (role == Qt::UserRole + 1) {
     return modIndex;
@@ -303,65 +320,67 @@ QVariant ModList::data(const QModelIndex &modelIndex, int role) const
       default: return QtGroupingProxy::AGGR_NONE;
     }
   } else if (role == Qt::UserRole + 3) {
-    return contentsToIcons(modInfo->getContents());
+    if (modInfo->hasFeature<Installed>()) {
+      return contentsToIcons(modInfo->getContents());
+    }
   } else if (role == Qt::FontRole) {
     QFont result;
     if (column == COL_NAME) {
       if (modInfo->getHighlight() & ModInfo::HIGHLIGHT_INVALID) {
         result.setItalic(true);
       }
-    } else if ((column == COL_CATEGORY) && (modInfo->hasFlag(ModInfo::FLAG_FOREIGN))) {
+    } else if ((column == COL_CATEGORY) && (modInfo->hasFlag(EModFlag::FOREIGN))) {
       result.setItalic(true);
     } else if (column == COL_VERSION) {
-      if (modInfo->updateAvailable() || modInfo->downgradeAvailable()) {
+      if ((repository != nullptr)
+          && (repository->updateAvailable() || repository->downgradeAvailable())) {
         result.setWeight(QFont::Bold);
       }
     }
     return result;
   } else if (role == Qt::DecorationRole) {
     if (column == COL_VERSION) {
-      if (modInfo->updateAvailable()) {
+      if ((repository != nullptr) && repository->updateAvailable()) {
         return QIcon(":/MO/gui/update_available");
-      } else if (modInfo->downgradeAvailable()) {
+      } else if ((repository != nullptr) && repository->downgradeAvailable()) {
         return QIcon(":/MO/gui/warning");
-      } else if (modInfo->getVersion().scheme() == VersionInfo::SCHEME_DATE) {
+      } else if ((versioned != nullptr)
+                 && (versioned->get().scheme() == VersionInfo::SCHEME_DATE)) {
         return QIcon(":/MO/gui/version_date");
       }
     }
-    return QVariant();
   } else if (role == Qt::ForegroundRole) {
     if (column == COL_NAME) {
       int highlight = modInfo->getHighlight();
       if (highlight & ModInfo::HIGHLIGHT_IMPORTANT)    return QBrush(Qt::darkRed);
       else if (highlight & ModInfo::HIGHLIGHT_INVALID) return QBrush(Qt::darkGray);
     } else if (column == COL_VERSION) {
-      if (!modInfo->getNewestVersion().isValid()) {
-        return QVariant();
-      } else if (modInfo->updateAvailable() || modInfo->downgradeAvailable()) {
-        return QBrush(Qt::red);
-      } else {
-        return QBrush(Qt::darkGreen);
+      if (repository != nullptr) {
+        if (repository->updateAvailable() || repository->downgradeAvailable()) {
+          return QBrush(Qt::red);
+        } else {
+          return QBrush(Qt::darkGreen);
+        }
       }
     }
-    return QVariant();
   } else if ((role == Qt::BackgroundRole)
              || (role == ViewMarkingScrollBar::DEFAULT_ROLE)) {
     if (m_Overwrite.find(modIndex) != m_Overwrite.end()) {
       return QColor(0, 255, 0, 32);
     } else if (m_Overwritten.find(modIndex) != m_Overwritten.end()) {
       return QColor(255, 0, 0, 32);
-    } else {
-      return QVariant();
     }
   } else if (role == Qt::ToolTipRole) {
     if (column == COL_FLAGS) {
       QString result;
 
-      std::vector<ModInfo::EFlag> flags = modInfo->getFlags();
+      if (modInfo->hasFeature<ModFeature::Installed>()) {
+        std::set<EModFlag> flags = modInfo->flags();
 
-      for (auto iter = flags.begin(); iter != flags.end(); ++iter) {
-        if (result.length() != 0) result += "<br>";
-        result += getFlagText(*iter, modInfo);
+        for (auto iter = flags.begin(); iter != flags.end(); ++iter) {
+          if (result.length() != 0) result += "<br>";
+          result += getFlagText(*iter, modInfo);
+        }
       }
 
       return result;
@@ -375,40 +394,50 @@ QVariant ModList::data(const QModelIndex &modelIndex, int role) const
         return QString();
       }
     } else if (column == COL_VERSION) {
-      QString text = tr("installed version: \"%1\", newest version: \"%2\"").arg(modInfo->getVersion().displayString()).arg(modInfo->getNewestVersion().displayString());
-      if (modInfo->downgradeAvailable()) {
+      VersionInfo version = "?";
+      VersionInfo newestVersion = "?";
+      Versioned *versioned = modInfo->feature<Versioned>();
+      if (versioned != nullptr) {
+        version = versioned->get();
+      }
+      Repository *repo = modInfo->feature<Repository>();
+      if (repo != nullptr) {
+        newestVersion = repo->version();
+      }
+      QString text = tr("installed version: \"%1\", newest version: \"%2\"")
+          .arg(version.displayString())
+          .arg(newestVersion.displayString());
+      if ((repo != nullptr) && (repo->downgradeAvailable())) {
         text += "<br>" + tr("The newest version on Nexus seems to be older than the one you have installed. This could either mean the version you have has been withdrawn "
                           "(i.e. due to a bug) or the author uses a non-standard versioning scheme and that newest version is actually newer. "
                           "Either way you may want to \"upgrade\".");
       }
       return text;
     } else if (column == COL_CATEGORY) {
-      const std::set<int> &categories = modInfo->getCategories();
-      std::wostringstream categoryString;
-      categoryString << ToWString(tr("Categories: <br>"));
-      CategoryFactory &categoryFactory = CategoryFactory::instance();
-      for (std::set<int>::const_iterator catIter = categories.begin();
-           catIter != categories.end(); ++catIter) {
-        if (catIter != categories.begin()) {
-          categoryString << " , ";
+      if (categorized != nullptr) {
+        const std::set<int> &categories = categorized->getCategories();
+        std::wostringstream categoryString;
+        categoryString << ToWString(tr("Categories: <br>"));
+        CategoryFactory &categoryFactory = CategoryFactory::instance();
+        for (std::set<int>::const_iterator catIter = categories.begin();
+             catIter != categories.end(); ++catIter) {
+          if (catIter != categories.begin()) {
+            categoryString << " , ";
+          }
+          try {
+            categoryString << "<span style=\"white-space: nowrap;\"><i>" << ToWString(categoryFactory.getCategoryName(categoryFactory.getCategoryIndex(*catIter))) << "</font></span>";
+          } catch (const std::exception &e) {
+            qCritical("failed to generate tooltip: %s", e.what());
+            return QString();
+          }
         }
-        try {
-          categoryString << "<span style=\"white-space: nowrap;\"><i>" << ToWString(categoryFactory.getCategoryName(categoryFactory.getCategoryIndex(*catIter))) << "</font></span>";
-        } catch (const std::exception &e) {
-          qCritical("failed to generate tooltip: %s", e.what());
-          return QString();
-        }
+
+        return ToQString(categoryString.str());
       }
-
-      return ToQString(categoryString.str());
-    } else {
-      return QVariant();
     }
-  } else {
-    return QVariant();
   }
+  return QVariant();
 }
-
 
 bool ModList::renameMod(int index, const QString &newName)
 {
@@ -479,7 +508,7 @@ bool ModList::setData(const QModelIndex &index, const QVariant &value, int role)
         bool ok = false;
         int newID = value.toInt(&ok);
         if (ok) {
-          info->setNexusID(newID);
+          info->setRepoModID(newID);
           emit modlist_changed(index, role);
           result = true;
         } else {
@@ -487,11 +516,16 @@ bool ModList::setData(const QModelIndex &index, const QVariant &value, int role)
         }
       } break;
       case COL_VERSION: {
-        VersionInfo::VersionScheme scheme = info->getVersion().scheme();
-        VersionInfo version(value.toString(), scheme, true);
-        if (version.isValid()) {
-          info->setVersion(version);
-          result = true;
+        Versioned *versioned = info->feature<Versioned>();
+        if (versioned != nullptr) {
+          VersionInfo::VersionScheme scheme = versioned->get().scheme();
+          VersionInfo version(value.toString(), scheme, true);
+          if (version.isValid()) {
+            versioned->set(version);
+            result = true;
+          } else {
+            result = false;
+          }
         } else {
           result = false;
         }
@@ -551,22 +585,32 @@ Qt::ItemFlags ModList::flags(const QModelIndex &modelIndex) const
   }
   if (modelIndex.isValid()) {
     ModInfo::Ptr modInfo = ModInfo::getByIndex(modelIndex.row());
-    if (modInfo->getFixedPriority() == INT_MIN) {
-      result |= Qt::ItemIsDragEnabled;
-      result |= Qt::ItemIsUserCheckable;
-      if ((modelIndex.column() == COL_NAME) ||
-          (modelIndex.column() == COL_PRIORITY) ||
-          (modelIndex.column() == COL_VERSION) ||
-          (modelIndex.column() == COL_MODID)) {
-        result |= Qt::ItemIsEditable;
+    Positioning *positioning = modInfo->feature<Positioning>();
+
+    if (positioning != nullptr) {
+      if (positioning->checkable() == Positioning::ECheckable::USER_CHECKABLE) {
+        result |= Qt::ItemIsUserCheckable;
+      }
+
+      if (!positioning->isPositionFixed()) {
+        result |= Qt::ItemIsDragEnabled;
       }
     }
-    std::vector<ModInfo::EFlag> flags = modInfo->getFlags();
-    if ((m_DropOnItems) && (std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) == flags.end())) {
+
+    if ((modelIndex.column() == COL_NAME) ||
+        (modelIndex.column() == COL_PRIORITY) ||
+        (modelIndex.column() == COL_VERSION) ||
+        (modelIndex.column() == COL_MODID)) {
+      result |= Qt::ItemIsEditable;
+    }
+
+    if (m_DropOnItems && !modInfo->hasFeature<OverwriteLocation>()) {
       result |= Qt::ItemIsDropEnabled;
     }
   } else {
-    if (!m_DropOnItems) result |= Qt::ItemIsDropEnabled;
+    if (!m_DropOnItems) {
+      result |= Qt::ItemIsDropEnabled;
+    }
   }
   return result;
 }
@@ -674,18 +718,25 @@ IModList::ModStates ModList::state(unsigned int modIndex) const
     if (modInfo->isEmpty()) {
       result |= IModList::STATE_EMPTY;
     }
-    if (modInfo->endorsedState() == ModInfo::ENDORSED_TRUE) {
+    Endorsable *endorsable = modInfo->feature<Endorsable>();
+    if ((endorsable != nullptr) && (endorsable->endorsedState() == Endorsable::ENDORSED_TRUE)) {
       result |= IModList::STATE_ENDORSED;
     }
     if (modInfo->isValid()) {
       result |= IModList::STATE_VALID;
     }
-    if (modInfo->canBeEnabled()) {
-      if (m_Profile->modEnabled(modIndex)) {
-        result |= IModList::STATE_ACTIVE;
+    Positioning *positioning = modInfo->feature<Positioning>();
+    if (positioning != nullptr) {
+      switch (positioning->checkable()) {
+        case Positioning::ECheckable::USER_CHECKABLE: {
+          if (m_Profile->modEnabled(modIndex)) {
+            result |= IModList::STATE_ACTIVE;
+          }
+        } break;
+        case Positioning::ECheckable::FIXED_ACTIVE: {
+          result |= IModList::STATE_ESSENTIAL;
+        } break;
       }
-    } else {
-      result |= IModList::STATE_ESSENTIAL;
     }
   }
   return result;
@@ -761,8 +812,8 @@ bool ModList::dropURLs(const QMimeData *mimeData, int row, const QModelIndex &pa
   QDir gameDirectory(qApp->property("dataPath").toString() + "/" + QString::fromStdWString(AppConfig::overwritePath()));
 
   unsigned int overwriteIndex = ModInfo::findMod([](ModInfo::Ptr mod) -> bool {
-    std::vector<ModInfo::EFlag> flags = mod->getFlags();
-    return std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) != flags.end(); });
+    std::set<EModFlag> flags = mod->flags();
+    return std::find(flags.begin(), flags.end(), EModFlag::OVERWRITE) != flags.end(); });
 
   QString overwriteName = ModInfo::getByIndex(overwriteIndex)->name();
 
@@ -868,7 +919,12 @@ void ModList::removeRowForce(int row, const QModelIndex &parent)
     emit removeOrigin(modInfo->name());
   }
 
-  emit modUninstalled(modInfo->getInstallationFile());
+  Installed *installed = modInfo->feature<Installed>();
+  if (installed != nullptr) {
+    emit modUninstalled(installed->getInstallationFile());
+  } else {
+    emit modUninstalled(QString());
+  }
 }
 
 bool ModList::removeRows(int row, int count, const QModelIndex &parent)
@@ -884,7 +940,8 @@ bool ModList::removeRows(int row, int count, const QModelIndex &parent)
 
   for (int i = 0; i < count; ++i) {
     ModInfo::Ptr modInfo = ModInfo::getByIndex(row + i);
-    if (!modInfo->isRegular()) {
+    if (modInfo->hasFlag(EModFlag::BACKUP)
+        || modInfo->hasFlag(EModFlag::FOREIGN)) {
       continue;
     }
 

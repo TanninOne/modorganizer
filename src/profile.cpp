@@ -69,7 +69,6 @@ Profile::Profile(const QString &name, IPluginGame *gamePlugin, bool useDefaultSe
   if (!fixDirectoryName(fixedName)) {
     throw MyException(tr("invalid profile name %1").arg(name));
   }
-
   if (!profileBase.exists() || !profileBase.mkdir(fixedName)) {
     throw MyException(tr("failed to create %1").arg(fixedName).toUtf8().constData());
   }
@@ -158,16 +157,17 @@ void Profile::writeModlistNow()
       unsigned int index = m_ModIndexByPriority[i];
       if (index != UINT_MAX) {
         ModInfo::Ptr modInfo = ModInfo::getByIndex(index);
-        std::vector<ModInfo::EFlag> flags = modInfo->getFlags();
-        if ((modInfo->getFixedPriority() == INT_MIN)) {
-          if (std::find(flags.begin(), flags.end(), ModInfo::FLAG_FOREIGN) != flags.end()) {
+        ModFeature::Positioning *positioning = modInfo->feature<ModFeature::Positioning>();
+        std::set<EModFlag> flags = modInfo->flags();
+        if ((positioning != nullptr) && !positioning->isPositionFixed()) {
+          if (positioning->position() != ModFeature::Positioning::EPosition::USER_POSITIONABLE) {
             file->write("*");
           } else if (m_ModStatus[index].m_Enabled) {
             file->write("+");
           } else {
             file->write("-");
           }
-          file->write(modInfo->name().toUtf8());
+          file->write(modInfo->internalName().toUtf8());
           file->write("\r\n");
         }
       }
@@ -181,7 +181,6 @@ void Profile::writeModlistNow()
     return;
   }
 }
-
 
 void Profile::createTweakedIniFile()
 {
@@ -270,8 +269,10 @@ void Profile::refreshModStatus()
       unsigned int modIndex = ModInfo::getIndex(lookupName);
       if (modIndex != UINT_MAX) {
         ModInfo::Ptr info = ModInfo::getByIndex(modIndex);
+        ModFeature::Positioning *positioning = info->feature<ModFeature::Positioning>();
+
         if ((modIndex < m_ModStatus.size())
-            && (info->getFixedPriority() == INT_MIN)) {
+            && ((positioning != nullptr) && !positioning->isPositionFixed())) {
           m_ModStatus[modIndex].m_Enabled = enabled || info->alwaysEnabled();
           if (m_ModStatus[modIndex].m_Priority == -1) {
             if (static_cast<size_t>(index) >= m_ModStatus.size()) {
@@ -302,7 +303,9 @@ void Profile::refreshModStatus()
   // give priorities to mods not referenced in the profile
   for (size_t i = 0; i < m_ModStatus.size(); ++i) {
     ModInfo::Ptr modInfo = ModInfo::getByIndex(i);
-    if (modInfo->getFixedPriority() == INT_MAX) {
+    ModFeature::Positioning *positioning = modInfo->feature<ModFeature::Positioning>();
+
+    if ((positioning == nullptr) || positioning->isPositionFixed()) {
       continue;
     }
 
@@ -312,7 +315,7 @@ void Profile::refreshModStatus()
       if (static_cast<size_t>(index) >= m_ModStatus.size()) {
         throw MyException(tr("invalid index %1").arg(index));
       }
-      if (modInfo->hasFlag(ModInfo::FLAG_FOREIGN)) {
+      if (modInfo->hasFlag(EModFlag::FOREIGN)) {
         m_ModStatus[i].m_Priority = --topInsert;
       } else {
         m_ModStatus[i].m_Priority = index++;
@@ -327,7 +330,9 @@ void Profile::refreshModStatus()
     int offset = topInsert * -1;
     for (size_t i = 0; i < m_ModStatus.size(); ++i) {
       ModInfo::Ptr modInfo = ModInfo::getByIndex(i);
-      if (modInfo->getFixedPriority() == INT_MAX) {
+      ModFeature::Positioning *positioning = modInfo->feature<ModFeature::Positioning>();
+
+      if ((positioning == nullptr) || positioning->isPositionFixed()) {
         continue;
       }
 
@@ -386,8 +391,7 @@ std::vector<std::tuple<QString, QString, int> > Profile::getActiveMods()
   }
 
   unsigned int overwriteIndex = ModInfo::findMod([](ModInfo::Ptr mod) -> bool {
-    std::vector<ModInfo::EFlag> flags = mod->getFlags();
-    return std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) != flags.end(); });
+      return mod->hasFeature<ModFeature::OverwriteLocation>(); });
 
   if (overwriteIndex != UINT_MAX) {
     ModInfo::Ptr overwriteInfo = ModInfo::getByIndex(overwriteIndex);

@@ -27,6 +27,7 @@ along with Mod Organizer.  If not, see <http://www.gnu.org/licenses/>.
 
 
 using namespace MOBase;
+using namespace MOBase::ModFeature;
 using namespace MOShared;
 
 
@@ -48,7 +49,7 @@ DirectoryEntry *DirectoryRefresher::getDirectoryStructure()
   return result;
 }
 
-void DirectoryRefresher::setMods(const std::vector<std::tuple<QString, QString, int> > &mods
+void DirectoryRefresher::setMods(const std::vector<std::tuple<QString, QString, int>> &mods
                                  , const std::set<QString> &managedArchives)
 {
   QMutexLocker locker(&m_RefreshLock);
@@ -56,8 +57,18 @@ void DirectoryRefresher::setMods(const std::vector<std::tuple<QString, QString, 
   m_Mods.clear();
   for (auto mod = mods.begin(); mod != mods.end(); ++mod) {
     QString name = std::get<0>(*mod);
-    ModInfo::Ptr info = ModInfo::getByIndex(ModInfo::getIndex(name));
-    m_Mods.push_back(EntryInfo(name, std::get<1>(*mod), info->stealFiles(), info->archives(), std::get<2>(*mod)));
+    unsigned int index = ModInfo::getIndex(name);
+    if (index == UINT_MAX) {
+      qCritical("mod %s not found", qPrintable(name));
+    }
+    ModInfo::Ptr info = ModInfo::getByIndex(index);
+    ForeignInstalled *foreign = info->feature<ForeignInstalled>();
+
+    m_Mods.push_back(EntryInfo(name,
+                               std::get<1>(*mod),
+                               foreign != nullptr ? foreign->stealFiles() : QStringList(),
+                               info->archives(),
+                               std::get<2>(*mod)));
   }
 
   m_EnabledArchives = managedArchives;

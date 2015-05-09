@@ -136,17 +136,10 @@ void NXMAccessManager::pageLogin()
   request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
 
   QByteArray postDataQuery;
-#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
   QUrlQuery postData;
   postData.addQueryItem("username", m_Username);
   postData.addQueryItem("password", m_Password);
   postDataQuery = postData.query(QUrl::FullyEncoded).toUtf8();
-#else
-  QUrl postData;
-  postData.addQueryItem("username", m_Username);
-  postData.addQueryItem("password", m_Password);
-  postDataQuery = postData.encodedQuery();
-#endif
 
   QString userAgent = QString("Mod Organizer v%1 (compatible to Nexus Client v%2)").arg(m_MOVersion).arg(m_NMMVersion);
   request.setRawHeader("User-Agent", userAgent.toUtf8());

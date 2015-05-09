@@ -106,7 +106,7 @@ protected:
 
 private:
 
-  bool hasConflictFlag(const std::vector<ModInfo::EFlag> &flags) const;
+  bool hasConflictFlag(const std::set<EModFlag> &flags) const;
   void updateFilterActive();
   bool filterMatchesModAnd(ModInfo::Ptr info, bool enabled) const;
   bool filterMatchesModOr(ModInfo::Ptr info, bool enabled) const;

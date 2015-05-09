@@ -76,7 +76,7 @@ public:
   * @param modInfo info structure about the mod to display
   * @param parent parend widget
   **/
- explicit ModInfoDialog(ModInfo::Ptr modInfo, const MOShared::DirectoryEntry *directory, bool unmanaged, QWidget *parent = 0);
+ explicit ModInfoDialog(ModInfo::Ptr modInfo, const MOShared::DirectoryEntry *directory, QWidget *parent = 0);
   ~ModInfoDialog();
 
   /**
@@ -147,9 +147,11 @@ private:
   bool hideFile(const QString &oldName);
   bool unhideFile(const QString &oldName);
   void addCheckedCategories(QTreeWidgetItem *tree);
-  void refreshPrimaryCategoriesBox();
+  void refreshPrimaryCategoriesBox(MOBase::ModFeature::Categorized *categorized);
 
   int tabIndex(const QString &tabId);
+
+  void refreshRepositoryData(MOBase::ModFeature::Repository *repo);
 
 private slots:
 

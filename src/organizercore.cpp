@@ -167,7 +167,6 @@ OrganizerCore::~OrganizerCore()
   // profile has to be cleaned up before the modinfo-buffer is cleared
   delete m_CurrentProfile;
   m_CurrentProfile = nullptr;
-
   ModInfo::clear();
   LogBuffer::cleanQuit();
   m_ModList.setProfile(nullptr);
@@ -330,7 +329,7 @@ void OrganizerCore::updateExecutablesList(QSettings &settings)
 
 
   // TODO this has nothing to do with executables list move to an appropriate function!
-  ModInfo::updateFromDisc(m_Settings.getModDirectory(), &m_DirectoryStructure, m_Settings.displayForeign());
+//  ModInfo::updateFromDisc(m_Settings.getModDirectory(), &m_DirectoryStructure, m_Settings.displayForeign());
 }
 
 void OrganizerCore::setUserInterface(IUserInterface *userInterface, QWidget *widget)
@@ -392,6 +391,8 @@ void OrganizerCore::setManagedGame(const QString &gameName, const QString &gameP
     m_GamePlugin = m_PluginContainer->managedGame(m_GameName);
     m_GamePlugin->setGamePath(gamePath);
     qApp->setProperty("managed_game", QVariant::fromValue(m_GamePlugin));
+
+    ModInfo::updateFromDisc(m_Settings.getModDirectory(), &m_DirectoryStructure, m_Settings.displayForeign());
     emit managedGameChanged(m_GamePlugin);
   }
 }
@@ -511,9 +512,9 @@ void OrganizerCore::setCurrentProfile(const QString &profileName)
   m_CurrentProfile = newProfile;
   m_ModList.setProfile(newProfile);
 
-  connect(m_CurrentProfile, SIGNAL(modStatusChanged(uint)), this, SLOT(modStatusChanged(uint)));
+  refreshModList();
 
-  refreshDirectoryStructure();
+  connect(m_CurrentProfile, SIGNAL(modStatusChanged(uint)), this, SLOT(modStatusChanged(uint)));
 }
 
 MOBase::IGameInfo &OrganizerCore::gameInfo() const
@@ -681,13 +682,23 @@ void OrganizerCore::installDownload(int index)
     // see if there already are mods with the specified mod id
     if (modID != 0) {
       std::vector<ModInfo::Ptr> modInfo = ModInfo::getByModID(modID);
+
+      for (const ModInfo::Ptr &mod : modInfo) {
+        std::set<EModFlag> flags = mod->flags();
+        if (std::find(flags.begin(), flags.end(), EModFlag::BACKUP) == flags.end()) {
+          modName.update(mod->name(), GUESS_PRESET);
+          mod->saveMeta();
+        }
+      }
+      /*
       for (auto iter = modInfo.begin(); iter != modInfo.end(); ++iter) {
-        std::vector<ModInfo::EFlag> flags = (*iter)->getFlags();
-        if (std::find(flags.begin(), flags.end(), ModInfo::FLAG_BACKUP) == flags.end()) {
+        std::set<EModFlag> flags = (*iter)->getFlags();
+        if (std::find(flags.begin(), flags.end(), EModFlag::BACKUP) == flags.end()) {
           modName.update((*iter)->name(), GUESS_PRESET);
           (*iter)->saveMeta();
         }
       }
+      */
     }
 
     m_CurrentProfile->writeModlistNow();
@@ -701,7 +712,11 @@ void OrganizerCore::installDownload(int index)
       int modIndex = ModInfo::getIndex(modName);
       if (modIndex != UINT_MAX) {
         ModInfo::Ptr modInfo = ModInfo::getByIndex(modIndex);
-        modInfo->addInstalledFile(modID, fileID);
+
+        ModFeature::Installed *installed = modInfo->feature<ModFeature::Installed>();
+        if (installed != nullptr) {
+          installed->addInstalledFile(modID, fileID);
+        }
 
         if (hasIniTweaks
             && m_UserInterface != nullptr
@@ -1106,7 +1121,6 @@ void OrganizerCore::refreshModList(bool saveChanges)
 void OrganizerCore::refreshESPList()
 {
   m_CurrentProfile->modlistWriter().write();
-
   // clear list
   try {
     m_PluginList.refresh(m_CurrentProfile->name(),
@@ -1186,12 +1200,14 @@ void OrganizerCore::updateModActiveState(int index, bool active)
 void OrganizerCore::updateModInDirectoryStructure(unsigned int index, ModInfo::Ptr modInfo)
 {
   // add files of the bsa to the directory structure
-  m_DirectoryRefresher.addModFilesToStructure(m_DirectoryStructure
-                                              , modInfo->name()
-                                              , m_CurrentProfile->getModPriority(index)
-                                              , modInfo->absolutePath()
-                                              , modInfo->stealFiles()
-                                              );
+  ModFeature::ForeignInstalled *foreign = modInfo->feature<ModFeature::ForeignInstalled>();
+
+  m_DirectoryRefresher.addModFilesToStructure(
+        m_DirectoryStructure
+        , modInfo->name()
+        , m_CurrentProfile->getModPriority(index)
+        , modInfo->absolutePath()
+        , foreign != nullptr ? foreign->stealFiles() : QStringList());
   DirectoryRefresher::cleanStructure(m_DirectoryStructure);
   // need to refresh plugin list now so we can activate esps
   refreshESPList();
@@ -1411,8 +1427,8 @@ void OrganizerCore::loginFailedUpdate(const QString &message)
 void OrganizerCore::syncOverwrite()
 {
   unsigned int overwriteIndex = ModInfo::findMod([](ModInfo::Ptr mod) -> bool {
-    std::vector<ModInfo::EFlag> flags = mod->getFlags();
-    return std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) != flags.end(); });
+    std::set<EModFlag> flags = mod->flags();
+    return std::find(flags.begin(), flags.end(), EModFlag::OVERWRITE) != flags.end(); });
 
   ModInfo::Ptr modInfo = ModInfo::getByIndex(overwriteIndex);
   SyncOverwriteDialog syncDialog(modInfo->absolutePath(), m_DirectoryStructure, qApp->activeWindow());

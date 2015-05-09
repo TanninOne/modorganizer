@@ -196,7 +196,6 @@ MainWindow::MainWindow(const QString &exeName
 
   // set up mod list
   m_ModListSortProxy = m_OrganizerCore.createModListProxyModel();
-
   ui->modList->setModel(m_ModListSortProxy);
 
   GenericIconDelegate *contentDelegate = new GenericIconDelegate(ui->modList, Qt::UserRole + 3, ModList::COL_CONTENT, 150);
@@ -1442,11 +1441,12 @@ void MainWindow::fixCategories()
 {
   for (unsigned int i = 0; i < ModInfo::getNumMods(); ++i) {
     ModInfo::Ptr modInfo = ModInfo::getByIndex(i);
-    std::set<int> categories = modInfo->getCategories();
-    for (std::set<int>::iterator iter = categories.begin();
-         iter != categories.end(); ++iter) {
-      if (!m_CategoryFactory.categoryExists(*iter)) {
-        modInfo->setCategory(*iter, false);
+    ModFeature::Categorized *categorized = modInfo->feature<ModFeature::Categorized>();
+    if (categorized != nullptr) {
+      for (int categoryId : categorized->getCategories()) {
+        if (!m_CategoryFactory.categoryExists(categoryId)) {
+          categorized->set(categoryId, false);
+        }
       }
     }
   }
@@ -1849,12 +1849,16 @@ void MainWindow::modorder_changed()
     QModelIndex current = ui->modList->currentIndex();
     if (current.isValid()) {
       ModInfo::Ptr modInfo = ModInfo::getByIndex(current.data(Qt::UserRole + 1).toInt());
-      modInfo->doConflictCheck();
-      m_OrganizerCore.modList()->setOverwriteMarkers(modInfo->getModOverwrite(), modInfo->getModOverwritten());
-      if (m_ModListSortProxy != nullptr) {
-        m_ModListSortProxy->invalidate();
+      ModFeature::Conflicting *conflicting = modInfo->feature<ModFeature::Conflicting>();
+      if (conflicting != nullptr) {
+        conflicting->doConflictCheck();
+        m_OrganizerCore.modList()->setOverwriteMarkers(conflicting->getModOverwrite(),
+                                                       conflicting->getModOverwritten());
+        if (m_ModListSortProxy != nullptr) {
+          m_ModListSortProxy->invalidate();
+        }
+        ui->modList->verticalScrollBar()->repaint();
       }
-      ui->modList->verticalScrollBar()->repaint();
     }
   }
 }
@@ -2063,12 +2067,15 @@ void MainWindow::refreshFilters()
   std::set<int> categoriesUsed;
   for (unsigned int modIdx = 0; modIdx < ModInfo::getNumMods(); ++modIdx) {
     ModInfo::Ptr modInfo = ModInfo::getByIndex(modIdx);
-    for (int categoryID : modInfo->getCategories()) {
-      int currentID = categoryID;
-      // also add parents so they show up in the tree
-      while (currentID != 0) {
-        categoriesUsed.insert(currentID);
-        currentID = m_CategoryFactory.getParentID(m_CategoryFactory.getCategoryIndex(currentID));
+    ModFeature::Categorized *categorized = modInfo->feature<ModFeature::Categorized>();
+    if (categorized != nullptr) {
+      for (int categoryId : categorized->getCategories()) {
+        int currentId = categoryId;
+        // also add parents so they show up in the tree
+        while (currentId != 0) {
+          categoriesUsed.insert(currentId);
+          currentId = m_CategoryFactory.getParentID(m_CategoryFactory.getCategoryIndex(currentId));
+        }
       }
     }
   }
@@ -2159,13 +2166,14 @@ void MainWindow::removeMod_clicked()
     if (selection->hasSelection() && selection->selectedRows().count() > 1) {
       QString mods;
       QStringList modNames;
-      foreach (QModelIndex idx, selection->selectedRows()) {
+      for (const QModelIndex &idx : selection->selectedRows()) {
         QString name = idx.data().toString();
-        if (!ModInfo::getByIndex(idx.data(Qt::UserRole + 1).toInt())->isRegular()) {
-          continue;
+        ModInfo::Ptr modInfo = ModInfo::getByIndex(idx.data(Qt::UserRole + 1).toInt());
+        if (!modInfo->hasFlag(EModFlag::BACKUP)
+            && !modInfo->hasFlag(EModFlag::FOREIGN)) {
+          mods += "<li>" + name + "</li>";
+          modNames.append(name);
         }
-        mods += "<li>" + name + "</li>";
-        modNames.append(name);
       }
       if (QMessageBox::question(this, tr("Confirm"),
                                 tr("Remove the following mods?<br><ul>%1</ul>").arg(mods),
@@ -2183,7 +2191,6 @@ void MainWindow::removeMod_clicked()
   }
 }
 
-
 void MainWindow::modRemoved(const QString &fileName)
 {
   if (!fileName.isEmpty() && !QFileInfo(fileName).isAbsolute()) {
@@ -2194,31 +2201,33 @@ void MainWindow::modRemoved(const QString &fileName)
   }
 }
 
-
 void MainWindow::reinstallMod_clicked()
 {
   ModInfo::Ptr modInfo = ModInfo::getByIndex(m_ContextRow);
-  QString installationFile = modInfo->getInstallationFile();
-  if (installationFile.length() != 0) {
-    QString fullInstallationFile;
-    QFileInfo fileInfo(installationFile);
-    if (fileInfo.isAbsolute()) {
-      if (fileInfo.exists()) {
-        fullInstallationFile = installationFile;
+  ModFeature::Installed *installed = modInfo->feature<ModFeature::Installed>();
+  if (installed != nullptr) {
+    QString installationFile = installed->getInstallationFile();
+    if (installationFile.length() != 0) {
+      QString fullInstallationFile;
+      QFileInfo fileInfo(installationFile);
+      if (fileInfo.isAbsolute()) {
+        if (fileInfo.exists()) {
+          fullInstallationFile = installationFile;
+        } else {
+          fullInstallationFile = m_OrganizerCore.downloadManager()->getOutputDirectory() + "/" + fileInfo.fileName();
+        }
       } else {
-        fullInstallationFile = m_OrganizerCore.downloadManager()->getOutputDirectory() + "/" + fileInfo.fileName();
+        fullInstallationFile = m_OrganizerCore.downloadManager()->getOutputDirectory() + "/" + installationFile;
+      }
+      if (QFile::exists(fullInstallationFile)) {
+        m_OrganizerCore.installMod(fullInstallationFile, modInfo->name());
+      } else {
+        QMessageBox::information(this, tr("Failed"), tr("Installation file no longer exists"));
       }
     } else {
-      fullInstallationFile = m_OrganizerCore.downloadManager()->getOutputDirectory() + "/" + installationFile;
+      QMessageBox::information(this, tr("Failed"),
+                               tr("Mods installed with old versions of MO can't be reinstalled in this way."));
     }
-    if (QFile::exists(fullInstallationFile)) {
-      m_OrganizerCore.installMod(fullInstallationFile, modInfo->name());
-    } else {
-      QMessageBox::information(this, tr("Failed"), tr("Installation file no longer exists"));
-    }
-  } else {
-    QMessageBox::information(this, tr("Failed"),
-                             tr("Mods installed with old versions of MO can't be reinstalled in this way."));
   }
 }
 
@@ -2242,8 +2251,13 @@ void MainWindow::resumeDownload(int downloadIndex)
 
 void MainWindow::endorseMod(ModInfo::Ptr mod)
 {
+  ModFeature::Endorsable *endorsable = mod->feature<ModFeature::Endorsable>();
+  if (endorsable == nullptr) {
+    return;
+  }
+
   if (NexusInterface::instance()->getAccessManager()->loggedIn()) {
-    mod->endorse(true);
+    endorsable->endorse(true);
   } else {
     QString username, password;
     if (m_OrganizerCore.settings().getNexusLogin(username, password)) {
@@ -2263,7 +2277,11 @@ void MainWindow::endorse_clicked()
 
 void MainWindow::dontendorse_clicked()
 {
-  ModInfo::getByIndex(m_ContextRow)->setNeverEndorse();
+  ModInfo::Ptr modInfo = ModInfo::getByIndex(m_ContextRow);
+  ModFeature::Endorsable *endorsable = modInfo->feature<ModFeature::Endorsable>();
+  if (endorsable != nullptr) {
+    endorsable->setNeverEndorse();
+  }
 }
 
 
@@ -2271,7 +2289,11 @@ void MainWindow::unendorse_clicked()
 {
   QString username, password;
   if (NexusInterface::instance()->getAccessManager()->loggedIn()) {
-    ModInfo::getByIndex(m_ContextRow)->endorse(false);
+    ModInfo::Ptr info = ModInfo::getByIndex(m_ContextRow);
+    ModFeature::Endorsable *endorsable = info->feature<ModFeature::Endorsable>();
+    if (endorsable != nullptr) {
+      endorsable->endorse(false);
+    }
   } else {
     if (m_OrganizerCore.settings().getNexusLogin(username, password)) {
       m_OrganizerCore.doAfterLogin([this] () { this->unendorse_clicked(); });
@@ -2309,8 +2331,8 @@ void MainWindow::displayModInformation(ModInfo::Ptr modInfo, unsigned int index,
     qDebug("A different mod information dialog is open. If this is incorrect, please restart MO");
     return;
   }
-  std::vector<ModInfo::EFlag> flags = modInfo->getFlags();
-  if (std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) != flags.end()) {
+  std::set<EModFlag> flags = modInfo->flags();
+  if (std::find(flags.begin(), flags.end(), EModFlag::OVERWRITE) != flags.end()) {
     QDialog *dialog = this->findChild<QDialog*>("__overwriteDialog");
     try {
       if (dialog == nullptr) {
@@ -2328,7 +2350,7 @@ void MainWindow::displayModInformation(ModInfo::Ptr modInfo, unsigned int index,
     }
   } else {
     modInfo->saveMeta();
-    ModInfoDialog dialog(modInfo, m_OrganizerCore.directoryStructure(), modInfo->hasFlag(ModInfo::FLAG_FOREIGN), this);
+    ModInfoDialog dialog(modInfo, m_OrganizerCore.directoryStructure(), this);
     connect(&dialog, SIGNAL(nexusLinkActivated(QString)), this, SLOT(nexusLinkActivated(QString)));
     connect(&dialog, SIGNAL(downloadRequest(QString)), &m_OrganizerCore, SLOT(downloadRequestedNXM(QString)));
     connect(&dialog, SIGNAL(modOpen(QString, int)), this, SLOT(displayModInformation(QString, int)), Qt::QueuedConnection);
@@ -2355,12 +2377,16 @@ void MainWindow::displayModInformation(ModInfo::Ptr modInfo, unsigned int index,
       FilesOrigin& origin = m_OrganizerCore.directoryStructure()->getOriginByName(ToWString(modInfo->name()));
       origin.enable(false);
 
-      m_OrganizerCore.directoryRefresher()->addModToStructure(m_OrganizerCore.directoryStructure()
-                                             , modInfo->name()
-                                             , m_OrganizerCore.currentProfile()->getModPriority(index)
-                                             , modInfo->absolutePath()
-                                             , modInfo->stealFiles()
-                                             , modInfo->archives());
+      ModFeature::ForeignInstalled *foreign = modInfo->feature<ModFeature::ForeignInstalled>();
+
+      m_OrganizerCore.directoryRefresher()->addModToStructure(
+            m_OrganizerCore.directoryStructure()
+            , modInfo->name()
+            , m_OrganizerCore.currentProfile()->getModPriority(index)
+            , modInfo->absolutePath()
+            , foreign != nullptr ? foreign->stealFiles()
+                                 : QStringList()
+            , modInfo->archives());
       DirectoryRefresher::cleanStructure(m_OrganizerCore.directoryStructure());
       m_OrganizerCore.refreshLists();
     }
@@ -2385,9 +2411,9 @@ void MainWindow::modOpenNext()
 
   m_ContextRow = m_ModListSortProxy->mapToSource(index).row();
   ModInfo::Ptr mod = ModInfo::getByIndex(m_ContextRow);
-  std::vector<ModInfo::EFlag> flags = mod->getFlags();
-  if ((std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) != flags.end()) ||
-      (std::find(flags.begin(), flags.end(), ModInfo::FLAG_BACKUP) != flags.end())) {
+  std::set<EModFlag> flags = mod->flags();
+  if ((std::find(flags.begin(), flags.end(), EModFlag::OVERWRITE) != flags.end()) ||
+      (std::find(flags.begin(), flags.end(), EModFlag::BACKUP) != flags.end())) {
     // skip overwrite and backups
     modOpenNext();
   } else {
@@ -2405,9 +2431,9 @@ void MainWindow::modOpenPrev()
 
   m_ContextRow = m_ModListSortProxy->mapToSource(m_ModListSortProxy->index(row, 0)).row();
   ModInfo::Ptr mod = ModInfo::getByIndex(m_ContextRow);
-  std::vector<ModInfo::EFlag> flags = mod->getFlags();
-  if ((std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) != flags.end()) ||
-      (std::find(flags.begin(), flags.end(), ModInfo::FLAG_BACKUP) != flags.end())) {
+  std::set<EModFlag> flags = mod->flags();
+  if ((std::find(flags.begin(), flags.end(), EModFlag::OVERWRITE) != flags.end()) ||
+      (std::find(flags.begin(), flags.end(), EModFlag::BACKUP) != flags.end())) {
     // skip overwrite and backups
     modOpenPrev();
   } else {
@@ -2501,14 +2527,14 @@ void MainWindow::createModFromOverwrite()
   }
 
   unsigned int overwriteIndex = ModInfo::findMod([](ModInfo::Ptr mod) -> bool {
-    std::vector<ModInfo::EFlag> flags = mod->getFlags();
-    return std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) != flags.end(); });
+    std::set<EModFlag> flags = mod->flags();
+    return std::find(flags.begin(), flags.end(), EModFlag::OVERWRITE) != flags.end(); });
 
   ModInfo::Ptr overwriteInfo = ModInfo::getByIndex(overwriteIndex);
   shellMove(QStringList(QDir::toNativeSeparators(overwriteInfo->absolutePath()) + "\\*"),
             QStringList(QDir::toNativeSeparators(newMod->absolutePath())), this);
 
-  m_OrganizerCore.refreshModList();
+//  m_OrganizerCore.refreshModList();
 }
 
 void MainWindow::cancelModListEditor()
@@ -2542,7 +2568,11 @@ void MainWindow::on_modList_doubleClicked(const QModelIndex &index)
 bool MainWindow::populateMenuCategories(QMenu *menu, int targetID)
 {
   ModInfo::Ptr modInfo = ModInfo::getByIndex(m_ContextRow);
-  const std::set<int> &categories = modInfo->getCategories();
+  ModFeature::Categorized *categorized = modInfo->feature<ModFeature::Categorized>();
+  if (categorized == nullptr) {
+    return false;
+  }
+  const std::set<int> &categories = categorized->getCategories();
 
   bool childEnabled = false;
 
@@ -2580,6 +2610,11 @@ bool MainWindow::populateMenuCategories(QMenu *menu, int targetID)
 void MainWindow::replaceCategoriesFromMenu(QMenu *menu, int modRow)
 {
   ModInfo::Ptr modInfo = ModInfo::getByIndex(modRow);
+  ModFeature::Categorized *categorized = modInfo->feature<ModFeature::Categorized>();
+  if (categorized == nullptr) {
+    return;
+  }
+
   foreach (QAction* action, menu->actions()) {
     if (action->menu() != nullptr) {
       replaceCategoriesFromMenu(action->menu(), modRow);
@@ -2587,7 +2622,7 @@ void MainWindow::replaceCategoriesFromMenu(QMenu *menu, int modRow)
       QWidgetAction *widgetAction = qobject_cast<QWidgetAction*>(action);
       if (widgetAction != nullptr) {
         QCheckBox *checkbox = qobject_cast<QCheckBox*>(widgetAction->defaultWidget());
-        modInfo->setCategory(widgetAction->data().toInt(), checkbox->isChecked());
+        categorized->set(widgetAction->data().toInt(), checkbox->isChecked());
       }
     }
   }
@@ -2597,7 +2632,11 @@ void MainWindow::addRemoveCategoriesFromMenu(QMenu *menu, int modRow, int refere
 {
   if (referenceRow != -1 && referenceRow != modRow) {
     ModInfo::Ptr editedModInfo = ModInfo::getByIndex(referenceRow);
-    foreach (QAction* action, menu->actions()) {
+    ModFeature::Categorized *editedCategorized = editedModInfo->feature<ModFeature::Categorized>();
+    if (editedCategorized == nullptr) {
+      return;
+    }
+    for (QAction *action : menu->actions()) {
       if (action->menu() != nullptr) {
         addRemoveCategoriesFromMenu(action->menu(), modRow, referenceRow);
       } else {
@@ -2605,12 +2644,15 @@ void MainWindow::addRemoveCategoriesFromMenu(QMenu *menu, int modRow, int refere
         if (widgetAction != nullptr) {
           QCheckBox *checkbox = qobject_cast<QCheckBox*>(widgetAction->defaultWidget());
           int categoryId = widgetAction->data().toInt();
-          bool checkedBefore = editedModInfo->categorySet(categoryId);
+          bool checkedBefore = editedCategorized->isSet(categoryId);
           bool checkedAfter = checkbox->isChecked();
 
           if (checkedBefore != checkedAfter) { // only update if the category was changed on the edited mod
             ModInfo::Ptr currentModInfo = ModInfo::getByIndex(modRow);
-            currentModInfo->setCategory(categoryId, checkedAfter);
+            ModFeature::Categorized *currentCategorized = currentModInfo->feature<ModFeature::Categorized>();
+            if (currentCategorized == nullptr) {
+              currentCategorized->set(categoryId, checkedAfter);
+            }
           }
         }
       }
@@ -2702,7 +2744,7 @@ void MainWindow::savePrimaryCategory()
     return;
   }
 
-  foreach (QAction* action, menu->actions()) {
+  for (QAction* action : menu->actions()) {
     QWidgetAction *widgetAction = qobject_cast<QWidgetAction*>(action);
     if (widgetAction != nullptr) {
       QRadioButton *btn = qobject_cast<QRadioButton*>(widgetAction->defaultWidget());
@@ -2710,7 +2752,10 @@ void MainWindow::savePrimaryCategory()
         QModelIndexList selected = ui->modList->selectionModel()->selectedRows();
         for (int i = 0; i < selected.size(); ++i) {
           ModInfo::Ptr modInfo = ModInfo::getByIndex(m_ModListSortProxy->mapToSource(selected.at(i)).row());
-          modInfo->setPrimaryCategory(widgetAction->data().toInt());
+          ModFeature::Categorized *categorized = modInfo->feature<ModFeature::Categorized>();
+          if (categorized != nullptr) {
+            categorized->setPrimary(widgetAction->data().toInt());
+          }
         }
         break;
       }
@@ -2768,22 +2813,30 @@ void MainWindow::changeVersioningScheme() {
 
     ModInfo::Ptr info = ModInfo::getByIndex(m_ContextRow);
 
+    ModFeature::Versioned *versioned = info->feature<ModFeature::Versioned>();
+    ModFeature::Repository *repo = info->feature<ModFeature::Repository>();
+    if ((versioned == nullptr) || (repo == nullptr)) {
+      return;
+    }
+
     bool success = false;
 
     static VersionInfo::VersionScheme schemes[] = { VersionInfo::SCHEME_REGULAR, VersionInfo::SCHEME_DECIMALMARK, VersionInfo::SCHEME_NUMBERSANDLETTERS };
 
     for (int i = 0; i < sizeof(schemes) / sizeof(VersionInfo::VersionScheme) && !success; ++i) {
-      VersionInfo verOld(info->getVersion().canonicalString(), schemes[i]);
-      VersionInfo verNew(info->getNewestVersion().canonicalString(), schemes[i]);
+      VersionInfo verOld(versioned->get().canonicalString(), schemes[i]);
+      VersionInfo verNew(repo->version().canonicalString(), schemes[i]);
       if (verOld < verNew) {
-        info->setVersion(verOld);
-        info->setNewestVersion(verNew);
+        versioned->set(verOld);
+        repo->setVersion(verNew);
         success = true;
       }
     }
     if (!success) {
       QMessageBox::information(this, tr("Sorry"),
-          tr("I don't know a versioning scheme where %1 is newer than %2.").arg(info->getNewestVersion().canonicalString()).arg(info->getVersion().canonicalString()),
+          tr("I don't know a versioning scheme where %1 is newer than %2.")
+                               .arg(repo->version().canonicalString())
+                               .arg(versioned->get().canonicalString()),
           QMessageBox::Ok);
     }
   }
@@ -2791,25 +2844,35 @@ void MainWindow::changeVersioningScheme() {
 
 void MainWindow::ignoreUpdate() {
   ModInfo::Ptr info = ModInfo::getByIndex(m_ContextRow);
-  info->ignoreUpdate(true);
+  ModFeature::Repository *repo = info->feature<ModFeature::Repository>();
+  if (repo != nullptr) {
+    repo->ignoreUpdate(true);
+  }
 }
 
 void MainWindow::unignoreUpdate()
 {
   ModInfo::Ptr info = ModInfo::getByIndex(m_ContextRow);
-  info->ignoreUpdate(false);
+  ModFeature::Repository *repo = info->feature<ModFeature::Repository>();
+  if (repo != nullptr) {
+    repo->ignoreUpdate(false);
+  }
 }
 
 void MainWindow::addPrimaryCategoryCandidates(QMenu *primaryCategoryMenu, ModInfo::Ptr info)
 {
-  const std::set<int> &categories = info->getCategories();
-  foreach (int categoryID, categories) {
+  ModFeature::Categorized *categorized = info->feature<ModFeature::Categorized>();
+  if (categorized == nullptr) {
+    return;
+  }
+  const std::set<int> &categories = categorized->getCategories();
+  for (int categoryID : categories) {
     int catIdx = m_CategoryFactory.getCategoryIndex(categoryID);
     QWidgetAction *action = new QWidgetAction(primaryCategoryMenu);
     try {
       QRadioButton *categoryBox = new QRadioButton(m_CategoryFactory.getCategoryName(catIdx).replace('&', "&&"),
-                                             primaryCategoryMenu);
-      categoryBox->setChecked(categoryID == info->getPrimaryCategory());
+                                                   primaryCategoryMenu);
+      categoryBox->setChecked(categoryID == categorized->primary());
       action->setDefaultWidget(categoryBox);
     } catch (const std::exception &e) {
       qCritical("failed to create category checkbox: %s", e.what());
@@ -2883,13 +2946,21 @@ void MainWindow::exportModListCSV()
         } else if ((selection.getChoiceData().toInt() == 2) && !m_ModListSortProxy->filterMatchesMod(info, enabled)) {
           continue;
         }
-        std::vector<ModInfo::EFlag> flags = info->getFlags();
-        if ((std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) == flags.end()) &&
-            (std::find(flags.begin(), flags.end(), ModInfo::FLAG_BACKUP) == flags.end())) {
-          builder.setRowField("mod_id", info->getNexusID());
-          builder.setRowField("mod_installed_name", info->name());
-          builder.setRowField("mod_version", info->getVersion().canonicalString());
-          builder.setRowField("file_installed_name", info->getInstallationFile());
+        std::set<EModFlag> flags = info->flags();
+        if ((std::find(flags.begin(), flags.end(),EModFlag::OVERWRITE) == flags.end()) &&
+            (std::find(flags.begin(), flags.end(), EModFlag::BACKUP) == flags.end())) {
+          ModFeature::Repository *repo = info->feature<ModFeature::Repository>();
+          ModFeature::Versioned *versioned = info->feature<ModFeature::Versioned>();
+          ModFeature::Installed *installed = info->feature<ModFeature::Installed>();
+          builder.setRowField("mod_id",
+                              repo != nullptr ? repo->modId() : QString());
+          builder.setRowField("mod_installed_name",
+                              info->name());
+          builder.setRowField("mod_version",
+                              versioned != nullptr ? versioned->get().canonicalString()
+                                                   : QString());
+          builder.setRowField("file_installed_name",
+                              installed != nullptr ? installed->getInstallationFile() : QString());
           builder.writeRow();
         }
       }
@@ -2946,59 +3017,66 @@ void MainWindow::on_modList_customContextMenuRequested(const QPoint &pos)
       allMods->setTitle(tr("All Mods"));
       menu->addMenu(allMods);
       ModInfo::Ptr info = ModInfo::getByIndex(m_ContextRow);
-      std::vector<ModInfo::EFlag> flags = info->getFlags();
-      if (std::find(flags.begin(), flags.end(), ModInfo::FLAG_OVERWRITE) != flags.end()) {
+      std::set<EModFlag> flags = info->flags();
+      if (info->hasFeature<ModFeature::OverwriteLocation>()) {
         if (QDir(info->absolutePath()).count() > 2) {
           menu->addAction(tr("Sync to Mods..."), &m_OrganizerCore, SLOT(syncOverwrite()));
           menu->addAction(tr("Create Mod..."), this, SLOT(createModFromOverwrite()));
         }
-      } else if (std::find(flags.begin(), flags.end(), ModInfo::FLAG_BACKUP) != flags.end()) {
+      } else if (std::find(flags.begin(), flags.end(), EModFlag::BACKUP) != flags.end()) {
         menu->addAction(tr("Restore Backup"), this, SLOT(restoreBackup_clicked()));
         menu->addAction(tr("Remove Backup..."), this, SLOT(removeMod_clicked()));
-      } else if (std::find(flags.begin(), flags.end(), ModInfo::FLAG_FOREIGN) != flags.end()) {
+      } else if (info->hasFeature<ModFeature::ForeignInstalled>()) {
         // nop, nothing to do with this mod
       } else {
-        QMenu *addRemoveCategoriesMenu = new QMenu(tr("Add/Remove Categories"));
-        populateMenuCategories(addRemoveCategoriesMenu, 0);
-        connect(addRemoveCategoriesMenu, SIGNAL(aboutToHide()), this, SLOT(addRemoveCategories_MenuHandler()));
-        addMenuAsPushButton(menu, addRemoveCategoriesMenu);
+        if (info->hasFeature<ModFeature::Categorized>()) {
+          QMenu *addRemoveCategoriesMenu = new QMenu(tr("Add/Remove Categories"));
+          populateMenuCategories(addRemoveCategoriesMenu, 0);
+          connect(addRemoveCategoriesMenu, SIGNAL(aboutToHide()), this, SLOT(addRemoveCategories_MenuHandler()));
+          addMenuAsPushButton(menu, addRemoveCategoriesMenu);
 
-        QMenu *replaceCategoriesMenu = new QMenu(tr("Replace Categories"));
-        populateMenuCategories(replaceCategoriesMenu, 0);
-        connect(replaceCategoriesMenu, SIGNAL(aboutToHide()), this, SLOT(replaceCategories_MenuHandler()));
-        addMenuAsPushButton(menu, replaceCategoriesMenu);
+          QMenu *replaceCategoriesMenu = new QMenu(tr("Replace Categories"));
+          populateMenuCategories(replaceCategoriesMenu, 0);
+          connect(replaceCategoriesMenu, SIGNAL(aboutToHide()), this, SLOT(replaceCategories_MenuHandler()));
+          addMenuAsPushButton(menu, replaceCategoriesMenu);
 
-        QMenu *primaryCategoryMenu = new QMenu(tr("Primary Category"));
-        connect(primaryCategoryMenu, SIGNAL(aboutToShow()), this, SLOT(addPrimaryCategoryCandidates()));
-        connect(primaryCategoryMenu, SIGNAL(aboutToHide()), this, SLOT(savePrimaryCategory()));
-        addMenuAsPushButton(menu, primaryCategoryMenu);
+          QMenu *primaryCategoryMenu = new QMenu(tr("Primary Category"));
+          connect(primaryCategoryMenu, SIGNAL(aboutToShow()), this, SLOT(addPrimaryCategoryCandidates()));
+          connect(primaryCategoryMenu, SIGNAL(aboutToHide()), this, SLOT(savePrimaryCategory()));
+          addMenuAsPushButton(menu, primaryCategoryMenu);
 
-        menu->addSeparator();
-        if (info->downgradeAvailable()) {
-          menu->addAction(tr("Change versioning scheme"), this, SLOT(changeVersioningScheme()));
+          menu->addSeparator();
         }
-        if (info->updateAvailable() || info->downgradeAvailable()) {
-          if (info->updateIgnored()) {
-            menu->addAction(tr("Un-ignore update"), this, SLOT(unignoreUpdate()));
-          } else {
-            menu->addAction(tr("Ignore update"), this, SLOT(ignoreUpdate()));
+        ModFeature::Repository *repo = info->feature<ModFeature::Repository>();
+        if (repo != nullptr) {
+          if (repo->downgradeAvailable()) {
+            menu->addAction(tr("Change versioning scheme"), this, SLOT(changeVersioningScheme()));
           }
+          if (repo->updateAvailable() || repo->downgradeAvailable()) {
+            if (repo->updateIgnored()) {
+              menu->addAction(tr("Un-ignore update"), this, SLOT(unignoreUpdate()));
+            } else {
+              menu->addAction(tr("Ignore update"), this, SLOT(ignoreUpdate()));
+            }
+          }
+          menu->addSeparator();
         }
-        menu->addSeparator();
 
         menu->addAction(tr("Rename Mod..."), this, SLOT(renameMod_clicked()));
         menu->addAction(tr("Remove Mod..."), this, SLOT(removeMod_clicked()));
         menu->addAction(tr("Reinstall Mod"), this, SLOT(reinstallMod_clicked()));
-        if (info->getNexusID() > 0) {
-          switch (info->endorsedState()) {
-            case ModInfo::ENDORSED_TRUE: {
+
+        ModFeature::Endorsable *endorsable = info->feature<ModFeature::Endorsable>();
+        if (endorsable != nullptr) {
+          switch (endorsable->endorsedState()) {
+            case ModFeature::Endorsable::ENDORSED_TRUE: {
               menu->addAction(tr("Un-Endorse"), this, SLOT(unendorse_clicked()));
             } break;
-            case ModInfo::ENDORSED_FALSE: {
+            case ModFeature::Endorsable::ENDORSED_FALSE: {
               menu->addAction(tr("Endorse"), this, SLOT(endorse_clicked()));
               menu->addAction(tr("Won't endorse"), this, SLOT(dontendorse_clicked()));
             } break;
-            case ModInfo::ENDORSED_NEVER: {
+            case ModFeature::Endorsable::ENDORSED_NEVER: {
               menu->addAction(tr("Endorse"), this, SLOT(endorse_clicked()));
             } break;
             default: {
@@ -3008,16 +3086,20 @@ void MainWindow::on_modList_customContextMenuRequested(const QPoint &pos)
             } break;
           }
         }
-        std::vector<ModInfo::EFlag> flags = info->getFlags();
-        if (std::find(flags.begin(), flags.end(), ModInfo::FLAG_INVALID) != flags.end()) {
+        std::set<EModFlag> flags = info->flags();
+        if (std::find(flags.begin(), flags.end(), EModFlag::INVALID) != flags.end()) {
           menu->addAction(tr("Ignore missing data"), this, SLOT(ignoreMissingData_clicked()));
         }
 
-        menu->addAction(tr("Visit on Nexus"), this, SLOT(visitOnNexus_clicked()));
-        menu->addAction(tr("Open in explorer"), this, SLOT(openExplorer_clicked()));
+        if (info->hasFeature<ModFeature::NexusRepository>()) {
+          menu->addAction(tr("Visit on Nexus"), this, SLOT(visitOnNexus_clicked()));
+        }
+        if (info->hasFeature<ModFeature::Installed>()) {
+          menu->addAction(tr("Open in explorer"), this, SLOT(openExplorer_clicked()));
+        }
       }
 
-      if (std::find(flags.begin(), flags.end(), ModInfo::FLAG_FOREIGN) == flags.end()) {
+      if (std::find(flags.begin(), flags.end(), EModFlag::FOREIGN) == flags.end()) {
         QAction *infoAction = menu->addAction(tr("Information..."), this, SLOT(information_clicked()));
         menu->setDefaultAction(infoAction);
       }
@@ -3798,14 +3880,22 @@ void MainWindow::nxmUpdatesAvailable(const std::vector<int> &modIDs, QVariant us
         ui->actionEndorseMO->setVisible(true);
       }
     } else {
-      std::vector<ModInfo::Ptr> info = ModInfo::getByModID(result["id"].toInt());
-      for (auto iter = info.begin(); iter != info.end(); ++iter) {
-        (*iter)->setNewestVersion(result["version"].toString());
-        (*iter)->setNexusDescription(result["description"].toString());
-        if (NexusInterface::instance()->getAccessManager()->loggedIn() &&
-            result.contains("voted_by_user")) {
+      std::vector<ModInfo::Ptr> modInfos = ModInfo::getByModID(result["id"].toInt());
+      for (ModInfo::Ptr modInfo : modInfos) {
+        ModFeature::Repository *repository = modInfo->feature<ModFeature::Repository>();
+
+        if (repository != nullptr) {
+          repository->setVersion(result["version"].toString());
+          repository->setDescription(result["description"].toString());
+        }
+
+        ModFeature::Endorsable *endorsable = modInfo->feature<ModFeature::Endorsable>();
+
+        if (NexusInterface::instance()->getAccessManager()->loggedIn()
+            && result.contains("voted_by_user")
+            && endorsable != nullptr) {
           // don't use endorsement info if we're not logged in or if the response doesn't contain it
-          (*iter)->setIsEndorsed(result["voted_by_user"].toBool());
+          endorsable->setIsEndorsed(result["voted_by_user"].toBool());
         }
       }
     }

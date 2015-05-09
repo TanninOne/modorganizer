@@ -28,6 +28,11 @@ along with Mod Organizer.  If not, see <http://www.gnu.org/licenses/>.
 #include <QMimeData>
 #include <QDebug>
 #include <QTreeView>
+#include <functional>
+
+
+using namespace MOBase::ModFeature;
+using MOBase::VersionInfo;
 
 
 ModListSortProxy::ModListSortProxy(Profile* profile, QObject *parent)
@@ -102,6 +107,26 @@ void ModListSortProxy::disableAllVisible()
   invalidate();
 }
 
+QString getFactoryName(int categoryId)
+{
+  if (categoryId < 0) {
+    return "(unset)";
+  } else {
+    CategoryFactory &categories = CategoryFactory::instance();
+    return categories.getCategoryName(categories.getCategoryIndex(categoryId));
+  }
+}
+
+template <typename T, typename U>
+T getValue(U *mod, const std::function<T()> &getter, const T &def)
+{
+  if (mod == nullptr) {
+    return def;
+  } else {
+    return getter();
+  }
+}
+
 bool ModListSortProxy::lessThan(const QModelIndex &left,
                                 const QModelIndex &right) const
 {
@@ -130,8 +155,8 @@ bool ModListSortProxy::lessThan(const QModelIndex &left,
 
   switch (left.column()) {
     case ModList::COL_FLAGS: {
-      if (leftMod->getFlags().size() != rightMod->getFlags().size())
-        lt = leftMod->getFlags().size() < rightMod->getFlags().size();
+      if (leftMod->flags().size() != rightMod->flags().size())
+        lt = leftMod->flags().size() < rightMod->flags().size();
     } break;
     case ModList::COL_CONTENT: {
       std::vector<ModInfo::EContent> lContent = leftMod->getContents();
@@ -157,28 +182,54 @@ bool ModListSortProxy::lessThan(const QModelIndex &left,
         lt = comp < 0;
     } break;
     case ModList::COL_CATEGORY: {
-      if (leftMod->getPrimaryCategory() != rightMod->getPrimaryCategory()) {
-        if (leftMod->getPrimaryCategory() < 0) lt = false;
-        else if (rightMod->getPrimaryCategory() < 0) lt = true;
-        else {
-          try {
-            CategoryFactory &categories = CategoryFactory::instance();
-            QString leftCatName = categories.getCategoryName(categories.getCategoryIndex(leftMod->getPrimaryCategory()));
-            QString rightCatName = categories.getCategoryName(categories.getCategoryIndex(rightMod->getPrimaryCategory()));
-            lt = leftCatName < rightCatName;
-          } catch (const std::exception &e) {
-            qCritical("failed to compare categories: %s", e.what());
-          }
-        }
+      int leftCategory = -1;
+      int rightCategory = -1;
+      Categorized *leftCategorized = leftMod->feature<Categorized>();
+      Categorized *rightCategorized = rightMod->feature<Categorized>();
+      if (leftCategorized != nullptr) {
+        leftCategory = leftCategorized->primary();
       }
+      if (rightCategorized != nullptr) {
+        rightCategory = rightCategorized->primary();
+      }
+      lt = getFactoryName(leftCategory) < getFactoryName(rightCategory);
     } break;
     case ModList::COL_MODID: {
-      if (leftMod->getNexusID() != rightMod->getNexusID())
-        lt = leftMod->getNexusID() < rightMod->getNexusID();
+      int leftModId = -1;
+      int rightModId = -1;
+      QString leftModIdStr, rightModIdStr;
+
+      Repository *leftRepo = leftMod->feature<Repository>();
+      Repository *rightRepo = rightMod->feature<Repository>();
+      bool leftIsNumeric = true;
+      bool rightIsNumeric = true;
+      if (leftRepo != nullptr) {
+        leftModIdStr = leftRepo->modId();
+        leftModId = leftModIdStr.toInt(&leftIsNumeric);
+      }
+      if (rightRepo != nullptr) {
+        rightModIdStr = rightRepo->modId();
+        rightModId = rightModIdStr.toInt(&rightIsNumeric);
+      }
+      if (leftIsNumeric && rightIsNumeric) {
+        lt = leftModId < rightModId;
+      } else {
+        lt = leftModIdStr < rightModIdStr;
+      }
     } break;
     case ModList::COL_VERSION: {
-      if (leftMod->getVersion() != rightMod->getVersion())
-        lt = leftMod->getVersion() < rightMod->getVersion();
+      VersionInfo leftVer, rightVer;
+      Versioned *leftVersioned = leftMod->feature<Versioned>();
+      Versioned *rightVersioned = rightMod->feature<Versioned>();
+
+      if (leftVersioned != nullptr) {
+        leftVer = leftVersioned->get();
+      }
+      if (rightVersioned != nullptr) {
+        rightVer = rightVersioned->get();
+      }
+
+      lt = leftVer < rightVer;
     } break;
     case ModList::COL_INSTALLTIME: {
       QDateTime leftTime = left.data().toDateTime();
@@ -202,13 +253,13 @@ void ModListSortProxy::updateFilter(const QString &filter)
   invalidate();
 }
 
-bool ModListSortProxy::hasConflictFlag(const std::vector<ModInfo::EFlag> &flags) const
+bool ModListSortProxy::hasConflictFlag(const std::set<EModFlag> &flags) const
 {
-  foreach (ModInfo::EFlag flag, flags) {
-    if ((flag == ModInfo::FLAG_CONFLICT_MIXED) ||
-        (flag == ModInfo::FLAG_CONFLICT_OVERWRITE) ||
-        (flag == ModInfo::FLAG_CONFLICT_OVERWRITTEN) ||
-        (flag == ModInfo::FLAG_CONFLICT_REDUNDANT)) {
+  for (EModFlag flag : flags) {
+    if ((flag == EModFlag::CONFLICT_MIXED) ||
+        (flag == EModFlag::CONFLICT_OVERWRITE) ||
+        (flag == EModFlag::CONFLICT_OVERWRITTEN) ||
+        (flag == EModFlag::CONFLICT_REDUNDANT)) {
       return true;
     }
   }
@@ -227,32 +278,50 @@ bool ModListSortProxy::filterMatchesModAnd(ModInfo::Ptr info, bool enabled) cons
         if (enabled || info->alwaysEnabled()) return false;
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_UPDATEAVAILABLE: {
-        if (!info->updateAvailable() && !info->downgradeAvailable()) return false;
+        Repository *repo = info->feature<Repository>();
+        if (repo == nullptr) {
+          return false;
+        } else if (!repo->updateAvailable() && !repo->downgradeAvailable()) {
+          return false;
+        }
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_NOCATEGORY: {
-        if (info->getCategories().size() > 0) return false;
+        Categorized *categorized = info->feature<Categorized>();
+        if (categorized != nullptr) {
+          if (categorized->getCategories().size() > 0) {
+            return false;
+          }
+        }
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_CONFLICT: {
-        if (!hasConflictFlag(info->getFlags())) return false;
+        if (!hasConflictFlag(info->flags())) return false;
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_NOTENDORSED: {
-        ModInfo::EEndorsedState state = info->endorsedState();
-        if (state != ModInfo::ENDORSED_FALSE) return false;
+        Endorsable *endorsable = info->feature<Endorsable>();
+        if (endorsable != nullptr) {
+          if (endorsable->endorsedState() != Endorsable::ENDORSED_FALSE) {
+            return false;
+          }
+        }
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_MANAGED: {
-        if (info->hasFlag(ModInfo::FLAG_FOREIGN)) return false;
+        if (info->hasFlag(EModFlag::FOREIGN)) return false;
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_UNMANAGED: {
-        if (!info->hasFlag(ModInfo::FLAG_FOREIGN)) return false;
+        if (!info->hasFlag(EModFlag::FOREIGN)) return false;
       } break;
       default: {
-        if (!info->categorySet(*iter)) return false;
+        MOBase::ModFeature::Categorized *category =
+            info->feature<MOBase::ModFeature::Categorized>();
+        if (!category->isSet(*iter))
+          return false;
       } break;
     }
   }
 
-  foreach (int content, m_ContentFilter) {
-    if (!info->hasContent(static_cast<ModInfo::EContent>(content))) return false;
+  for (int content : m_ContentFilter) {
+    if (!info->hasContent(static_cast<ModInfo::EContent>(content)))
+      return false;
   }
 
   return true;
@@ -269,26 +338,48 @@ bool ModListSortProxy::filterMatchesModOr(ModInfo::Ptr info, bool enabled) const
         if (!enabled && !info->alwaysEnabled()) return true;
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_UPDATEAVAILABLE: {
-        if (info->updateAvailable() || info->downgradeAvailable()) return true;
+        Repository *repo = info->feature<Repository>();
+        if (repo != nullptr) {
+          if (repo->updateAvailable() || repo->downgradeAvailable()) {
+            return true;
+          }
+        }
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_NOCATEGORY: {
-        if (info->getCategories().size() == 0) return true;
+        Categorized *categorized = info->feature<Categorized>();
+        if (categorized != nullptr) {
+          if (categorized->getCategories().size() == 0) {
+            return true;
+          }
+        } else {
+          return true;
+        }
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_CONFLICT: {
-        if (hasConflictFlag(info->getFlags())) return true;
+        if (hasConflictFlag(info->flags())) return true;
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_NOTENDORSED: {
-        ModInfo::EEndorsedState state = info->endorsedState();
-        if ((state == ModInfo::ENDORSED_FALSE) || (state == ModInfo::ENDORSED_NEVER)) return true;
+        Endorsable *endorsable = info->feature<Endorsable>();
+        if (endorsable != nullptr) {
+          Endorsable::EEndorsedState state = endorsable->endorsedState();
+          if ((state == Endorsable::ENDORSED_FALSE) || (state == Endorsable::ENDORSED_NEVER)) {
+            return true;
+          }
+        } else {
+          return true;
+        }
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_MANAGED: {
-        if (!info->hasFlag(ModInfo::FLAG_FOREIGN)) return true;
+        if (!info->hasFlag(EModFlag::FOREIGN)) return true;
       } break;
       case CategoryFactory::CATEGORY_SPECIAL_UNMANAGED: {
-        if (info->hasFlag(ModInfo::FLAG_FOREIGN)) return true;
+        if (info->hasFlag(EModFlag::FOREIGN)) return true;
       } break;
       default: {
-        if (info->categorySet(*iter)) return true;
+        Categorized *categorized = info->feature<Categorized>();
+        if ((categorized != nullptr) && categorized->isSet(*iter)) {
+          return true;
+        }
       } break;
     }
   }

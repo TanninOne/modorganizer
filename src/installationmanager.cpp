@@ -52,7 +52,7 @@ along with Mod Organizer.  If not, see <http://www.gnu.org/licenses/>.
 
 using namespace MOBase;
 using namespace MOShared;
-
+using namespace ModFeature;
 
 typedef Archive* (*CreateArchiveType)();
 
@@ -738,7 +738,7 @@ bool InstallationManager::install(const QString &fileName, GuessedValue<QString>
             unsigned int idx = ModInfo::getIndex(modName);
             if (idx != UINT_MAX) {
               ModInfo::Ptr info = ModInfo::getByIndex(idx);
-              info->setRepository(repository);
+              info->addFeature(new NexusRepository());
             }
           }
         }

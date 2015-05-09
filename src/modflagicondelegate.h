@@ -12,9 +12,9 @@ private:
   virtual QList<QString> getIcons(const QModelIndex &index) const;
   virtual size_t getNumIcons(const QModelIndex &index) const;
 
-  QString getFlagIcon(ModInfo::EFlag flag) const;
+  QString getFlagIcon(EModFlag flag) const;
 private:
-  static ModInfo::EFlag m_ConflictFlags[4];
+  static EModFlag m_ConflictFlags[4];
 };
 
 #endif // MODFLAGICONDELEGATE_H
