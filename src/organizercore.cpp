@@ -225,11 +225,11 @@ QSettings::Status OrganizerCore::storeSettings(const QString &fileName)
     settings.setValue("custom", item.isCustom());
     settings.setValue("toolbar", item.shownOnToolbar());
     settings.setValue("ownicon", item.usesOwnIcon());
+    settings.setValue("closeOnStart", item.closeOrganizerOnRun());
     if (item.isCustom()) {
       settings.setValue("binary", item.m_BinaryInfo.absoluteFilePath());
       settings.setValue("arguments", item.m_Arguments);
       settings.setValue("workingDirectory", item.m_WorkingDirectory);
-      settings.setValue("closeOnStart", item.m_CloseMO == ExecutableInfo::CloseMOStyle::DEFAULT_CLOSE);
       settings.setValue("steamAppID", item.m_SteamAppID);
     }
   }
@@ -327,21 +327,18 @@ void OrganizerCore::updateExecutablesList(QSettings &settings)
   int numCustomExecutables = settings.beginReadArray("customExecutables");
   for (int i = 0; i < numCustomExecutables; ++i) {
     settings.setArrayIndex(i);
-    ExecutableInfo::CloseMOStyle closeMO =
-        settings.value("closeOnStart").toBool() ? ExecutableInfo::CloseMOStyle::DEFAULT_CLOSE
-                                                : ExecutableInfo::CloseMOStyle::DEFAULT_STAY;
 
     Executable::Flags flags;
     if (settings.value("custom", true).toBool())   flags |= Executable::CustomExecutable;
     if (settings.value("toolbar", false).toBool()) flags |= Executable::ShowInToolbar;
     if (settings.value("ownicon", false).toBool()) flags |= Executable::UseApplicationIcon;
+    if (settings.value("closeOnStart", false).toBool()) flags |= Executable::CloseOrganizerOnRun;
 
 
     m_ExecutablesList.addExecutable(settings.value("title").toString(),
                                     settings.value("binary").toString(),
                                     settings.value("arguments").toString(),
                                     settings.value("workingDirectory", "").toString(),
-                                    closeMO,
                                     settings.value("steamAppID", "").toString(),
                                     flags);
   }
