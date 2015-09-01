@@ -35,14 +35,17 @@ struct Executable {
   QString m_Title;
   QFileInfo m_BinaryInfo;
   QString m_Arguments;
-  MOBase::ExecutableInfo::CloseMOStyle m_CloseMO;
   QString m_SteamAppID;
   QString m_WorkingDirectory;
 
   enum Flag {
-    CustomExecutable = 0x01,
-    ShowInToolbar = 0x02,
-    UseApplicationIcon = 0x04,
+    //These flags are set outside the Customise Executable window
+    CustomExecutable = 1 << 0,
+    ShowInToolbar = 1 << 1,
+    CloseConfigurationDisabled = 1 << 2,
+    //These two are set by the Customise Executable window
+    UseApplicationIcon = 1 << 3,
+    CloseOrganizerOnRun = 1 << 4,
 
     AllFlags = 0xff //I know, I know
   };
@@ -58,6 +61,11 @@ struct Executable {
   void showOnToolbar(bool state);
 
   bool usesOwnIcon() const { return  m_Flags.testFlag(UseApplicationIcon); }
+
+  bool closeOrganizerOnRun() const { return m_Flags.testFlag(CloseOrganizerOnRun); }
+
+  bool closeConfigurationDisabled() const { return m_Flags.testFlag(CloseConfigurationDisabled); }
+
 };
 
 
@@ -131,11 +139,10 @@ public:
                      const QString &executableName,
                      const QString &arguments,
                      const QString &workingDirectory,
-                     MOBase::ExecutableInfo::CloseMOStyle closeMO,
                      const QString &steamAppID,
                      Executable::Flags flags)
   {
-    updateExecutable(title, executableName, arguments, workingDirectory, closeMO, steamAppID, Executable::AllFlags, flags);
+    updateExecutable(title, executableName, arguments, workingDirectory, steamAppID, Executable::AllFlags, flags);
   }
 
   /**
@@ -150,7 +157,6 @@ public:
                         const QString &executableName,
                         const QString &arguments,
                         const QString &workingDirectory,
-                        MOBase::ExecutableInfo::CloseMOStyle closeMO,
                         const QString &steamAppID,
                         Executable::Flags mask,
                         Executable::Flags flags);
@@ -191,8 +197,8 @@ private:
   std::vector<Executable>::iterator findExe(const QString &title);
 
   void addExecutableInternal(const QString &title, const QString &executableName, const QString &arguments,
-                             const QString &workingDirectory, MOBase::ExecutableInfo::CloseMOStyle closeMO,
-                             const QString &steamAppID);
+                             const QString &workingDirectory,
+                             const QString &steamAppID, Executable::Flags flags);
 
 private:
 

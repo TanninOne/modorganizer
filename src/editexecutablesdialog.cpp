@@ -93,15 +93,20 @@ void EditExecutablesDialog::resetInput()
 
 void EditExecutablesDialog::saveExecutable()
 {
+  Executable::Flags flags;
+  if (ui->closeCheckBox->isChecked()) flags |= Executable::CloseOrganizerOnRun;
+  if (ui->useAppIconCheckBox->isChecked()) flags |= Executable::UseApplicationIcon;
   m_ExecutablesList.updateExecutable(ui->titleEdit->text(),
                                      QDir::fromNativeSeparators(ui->binaryEdit->text()),
                                      ui->argumentsEdit->text(),
                                      QDir::fromNativeSeparators(ui->workingDirEdit->text()),
-                                     (ui->closeCheckBox->checkState() == Qt::Checked) ?
-                                       ExecutableInfo::CloseMOStyle::DEFAULT_CLOSE
-                                     : ExecutableInfo::CloseMOStyle::DEFAULT_STAY,
                                      ui->overwriteAppIDBox->isChecked() ?
-                                       ui->appIDOverwriteEdit->text() : "",
+                                         ui->appIDOverwriteEdit->text() : "",
+                                          Executable::UseApplicationIcon,
+                                          ui->useAppIconCheckBox->isChecked() ?
+                                              Executable::UseApplicationIcon : Executable::Flags());
+                                     Executable::CloseOrganizerOnRun | Executable::UseApplicationIcon,
+                                     flags);
                                      Executable::UseApplicationIcon | Executable::CustomExecutable,
                                      (ui->useAppIconCheckBox->isChecked() ?
                                        Executable::UseApplicationIcon : Executable::Flags())
@@ -219,7 +224,7 @@ bool EditExecutablesDialog::executableChanged()
         || selectedExecutable.m_SteamAppID != ui->appIDOverwriteEdit->text()
         || selectedExecutable.m_WorkingDirectory != QDir::fromNativeSeparators(ui->workingDirEdit->text())
         || selectedExecutable.m_BinaryInfo.absoluteFilePath() != QDir::fromNativeSeparators(ui->binaryEdit->text())
-        || (selectedExecutable.m_CloseMO == ExecutableInfo::CloseMOStyle::DEFAULT_CLOSE) != ui->closeCheckBox->isChecked()
+        || selectedExecutable.closeOrganizerOnRun() != ui->closeCheckBox->isChecked()
         || selectedExecutable.usesOwnIcon() != ui->useAppIconCheckBox->isChecked();
   } else {
     return false;
@@ -286,10 +291,14 @@ void EditExecutablesDialog::on_executablesListBox_clicked(const QModelIndex &cur
     ui->binaryEdit->setText(QDir::toNativeSeparators(selectedExecutable.m_BinaryInfo.absoluteFilePath()));
     ui->argumentsEdit->setText(selectedExecutable.m_Arguments);
     ui->workingDirEdit->setText(QDir::toNativeSeparators(selectedExecutable.m_WorkingDirectory));
-    ui->closeCheckBox->setChecked(selectedExecutable.m_CloseMO == ExecutableInfo::CloseMOStyle::DEFAULT_CLOSE);
-    if (selectedExecutable.m_CloseMO == ExecutableInfo::CloseMOStyle::NEVER_CLOSE) {
+    ui->closeCheckBox->setChecked(selectedExecutable.closeOrganizerOnRun());
+    if (selectedExecutable.closeConfigurationDisabled()) {
       ui->closeCheckBox->setEnabled(false);
-      ui->closeCheckBox->setToolTip(tr("MO must be kept running or this application will not work correctly."));
+      if (selectedExecutable.closeOrganizerOnRun()) {
+        ui->closeCheckBox->setToolTip(tr("MO must be closed when this application is run or the application will not work correctly."));
+      } else {
+        ui->closeCheckBox->setToolTip(tr("MO must be kept running or this application will not work correctly."));
+      }
     } else {
       ui->closeCheckBox->setEnabled(true);
       ui->closeCheckBox->setToolTip(tr("If checked, MO will be closed once the specified executable is run."));
