@@ -102,16 +102,9 @@ void EditExecutablesDialog::saveExecutable()
                                      QDir::fromNativeSeparators(ui->workingDirEdit->text()),
                                      ui->overwriteAppIDBox->isChecked() ?
                                          ui->appIDOverwriteEdit->text() : "",
-                                          Executable::UseApplicationIcon,
-                                          ui->useAppIconCheckBox->isChecked() ?
-                                              Executable::UseApplicationIcon : Executable::Flags());
                                      Executable::CloseOrganizerOnRun | Executable::UseApplicationIcon,
                                      flags);
-                                     Executable::UseApplicationIcon | Executable::CustomExecutable,
-                                     (ui->useAppIconCheckBox->isChecked() ?
-                                       Executable::UseApplicationIcon : Executable::Flags())
-                                     | Executable::CustomExecutable);
-  }
+}
 
 
 void EditExecutablesDialog::delayedRefresh()
@@ -227,7 +220,12 @@ bool EditExecutablesDialog::executableChanged()
         || selectedExecutable.closeOrganizerOnRun() != ui->closeCheckBox->isChecked()
         || selectedExecutable.usesOwnIcon() != ui->useAppIconCheckBox->isChecked();
   } else {
-    return false;
+    return ! ui->argumentsEdit->text().isEmpty()
+        || ! ui->appIDOverwriteEdit->text().isEmpty()
+        || ! ui->workingDirEdit->text().isEmpty()
+        || ! ui->binaryEdit->text().isEmpty()
+        || ui->closeCheckBox->isChecked()
+        || ui->useAppIconCheckBox->isChecked();
   }
 }
 

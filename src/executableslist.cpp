@@ -133,36 +133,44 @@ void ExecutablesList::addExecutable(const Executable &executable)
 }
 
 
-void ExecutablesList::updateExecutable(const QString &title,
-                                       const QString &executableName,
-                                       const QString &arguments,
-                                       const QString &workingDirectory,
-                                       const QString &steamAppID,
-                                       Executable::Flags mask,
-                                       Executable::Flags flags)
+void ExecutablesList::updateExecutableImpl(const QString &title,
+                                           const QString &executableName,
+                                           const QString &arguments,
+                                           const QString &workingDirectory,
+                                           const QString &steamAppID,
+                                           Executable::Flags mask,
+                                           Executable::Flags flags,
+                                           bool isUpdate)
 {
   QFileInfo file(executableName);
   auto existingExe = findExe(title);
   flags &= mask;
 
   if (existingExe != m_Executables.end()) {
-    existingExe->m_Title = title;
     if (existingExe->closeConfigurationDisabled()) {
       //Make sure this information doesn't get played with.
       mask &= ~(Executable::CloseConfigurationDisabled | Executable::CloseOrganizerOnRun);
     }
+    if (! file.exists()) {
+      // don't overwrite a valid binary with an invalid one
+      file = existingExe->m_BinaryInfo;
+    }
+    if (isUpdate && ! flags.testFlag(Executable::CustomExecutable))
+    {
+      //Mark as custom if we've changed the run command.
+      if (existingExe->m_BinaryInfo != file ||
+          existingExe->m_Arguments != arguments ||
+          existingExe->m_WorkingDirectory != workingDirectory ||
+          existingExe->m_SteamAppID != steamAppID) {
+        flags |= Executable::CustomExecutable;
+      }
+    }
+    existingExe->m_BinaryInfo = file;
+    existingExe->m_Arguments = arguments;
+    existingExe->m_WorkingDirectory = workingDirectory;
+    existingExe->m_SteamAppID == steamAppID;
     existingExe->m_Flags &= ~mask;
     existingExe->m_Flags |= flags;
-    // for pre-configured executables don't overwrite settings we didn't store
-    if (flags & Executable::CustomExecutable) {
-      if (file.exists()) {
-        // don't overwrite a valid binary with an invalid one
-        existingExe->m_BinaryInfo = file;
-      }
-      existingExe->m_Arguments = arguments;
-      existingExe->m_WorkingDirectory = workingDirectory;
-      existingExe->m_SteamAppID = steamAppID;
-    }
   } else {
     Executable newExe;
     newExe.m_Title = title;

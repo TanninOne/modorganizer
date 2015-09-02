@@ -142,7 +142,7 @@ public:
                      const QString &steamAppID,
                      Executable::Flags flags)
   {
-    updateExecutable(title, executableName, arguments, workingDirectory, steamAppID, Executable::AllFlags, flags);
+    updateExecutableImpl(title, executableName, arguments, workingDirectory, steamAppID, Executable::AllFlags, flags, false);
   }
 
   /**
@@ -159,7 +159,10 @@ public:
                         const QString &workingDirectory,
                         const QString &steamAppID,
                         Executable::Flags mask,
-                        Executable::Flags flags);
+                        Executable::Flags flags)
+  {
+    updateExecutableImpl(title, executableName, arguments, workingDirectory, steamAppID, mask, flags, true);
+  }
 
   /**
    * @brief remove the executable with the specified file name. This needs to be an absolute file path
@@ -199,6 +202,15 @@ private:
   void addExecutableInternal(const QString &title, const QString &executableName, const QString &arguments,
                              const QString &workingDirectory,
                              const QString &steamAppID, Executable::Flags flags);
+
+  void updateExecutableImpl(const QString &title,
+                            const QString &executableName,
+                            const QString &arguments,
+                            const QString &workingDirectory,
+                            const QString &steamAppID,
+                            Executable::Flags mask,
+                            Executable::Flags flags,
+                            bool isUpdate);
 
 private:
 
