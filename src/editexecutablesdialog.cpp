@@ -219,12 +219,13 @@ bool EditExecutablesDialog::executableChanged()
         || selectedExecutable.closeOrganizerOnRun() != ui->closeCheckBox->isChecked()
         || selectedExecutable.usesOwnIcon() != ui->useAppIconCheckBox->isChecked();
   } else {
+    //Set as changed only if they have a valid executable and a title.
+    //Ignores directory, steam app ID, etc.
     QFileInfo fileInfo(ui->binaryEdit->text());
     return !ui->binaryEdit->text().isEmpty()
         && !ui->titleEdit->text().isEmpty()
         && fileInfo.exists()
         && fileInfo.isFile();
-        || ui->useAppIconCheckBox->isChecked();
   }
 }
 
