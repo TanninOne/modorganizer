@@ -102,8 +102,8 @@ void EditExecutablesDialog::saveExecutable()
                                      QDir::fromNativeSeparators(ui->workingDirEdit->text()),
                                      ui->overwriteAppIDBox->isChecked() ?
                                          ui->appIDOverwriteEdit->text() : "",
-                                     Executable::CloseOrganizerOnRun | Executable::UseApplicationIcon,
-                                     flags);
+                                     flags,
+                                     Executable::CloseOrganizerOnRun | Executable::UseApplicationIcon);
 }
 
 
