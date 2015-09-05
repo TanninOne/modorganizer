@@ -972,19 +972,11 @@ void MainWindow::registerModPage(IPluginModPage *modPage)
   toolBtn->menu()->addAction(action);
 }
 
-
 void MainWindow::startExeAction()
 {
   QAction *action = qobject_cast<QAction*>(sender());
   if (action != nullptr) {
-    const Executable &selectedExecutable(m_OrganizerCore.executablesList()->find(action->text()));
-    m_OrganizerCore.spawnBinary(
-          selectedExecutable.m_BinaryInfo,
-          selectedExecutable.m_Arguments,
-          selectedExecutable.m_WorkingDirectory.length() != 0 ? selectedExecutable.m_WorkingDirectory
-                                                              : selectedExecutable.m_BinaryInfo.absolutePath(),
-          selectedExecutable.closeOrganizerOnRun(),
-          selectedExecutable.m_SteamAppID);
+    m_OrganizerCore.spawnBinary(m_OrganizerCore.executablesList()->find(action->text()));
   } else {
     qCritical("not an action?");
   }
@@ -1655,15 +1647,7 @@ void MainWindow::installMod(QString fileName)
 
 void MainWindow::on_startButton_clicked()
 {
-  const Executable &selectedExecutable(getSelectedExecutable());
-
-  m_OrganizerCore.spawnBinary(
-        selectedExecutable.m_BinaryInfo,
-        selectedExecutable.m_Arguments,
-        selectedExecutable.m_WorkingDirectory.length() != 0 ? selectedExecutable.m_WorkingDirectory
-                                                            : selectedExecutable.m_BinaryInfo.absolutePath(),
-        selectedExecutable.closeOrganizerOnRun(),
-        selectedExecutable.m_SteamAppID);
+  m_OrganizerCore.spawnBinary(getSelectedExecutable());
 }
 
 

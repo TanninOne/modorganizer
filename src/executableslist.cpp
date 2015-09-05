@@ -48,12 +48,15 @@ void ExecutablesList::init(IPluginGame *game)
       if (info.closeByDefault()) flags |= Executable::CloseOrganizerOnRun;
       if (info.disableCloseSelection()) flags |= Executable::CloseConfigurationDisabled;
       if (info.isCustom()) flags |= Executable::CustomExecutable;
-      addExecutableInternal(info.title(),
-                            info.binary().absoluteFilePath(),
-                            info.arguments().join(" "),
-                            info.workingDirectory().absolutePath(),
-                            info.steamAppID(),
-                            flags);
+      QFileInfo file(info.binary().absoluteFilePath());
+      if (file.exists()) {
+        addExecutableInternal(info.title(),
+                              file,
+                              info.arguments().join(" "),
+                              info.workingDirectory().absolutePath(),
+                              info.steamAppID(),
+                              flags);
+      }
     }
   }
 }
@@ -132,38 +135,66 @@ void ExecutablesList::addExecutable(const Executable &executable)
   }
 }
 
+void  ExecutablesList::addExecutable(const QString &title,
+                                     const QString &executableName,
+                                     const QString &arguments,
+                                     const QString &workingDirectory,
+                                     const QString &steamAppID,
+                                     Executable::Flags flags)
+{
+  updateExecutableInternal(title, executableName, arguments, workingDirectory,
+                           steamAppID, flags, Executable::AllFlags);
+}
 
-void ExecutablesList::updateExecutableImpl(const QString &title,
-                                           const QString &executableName,
-                                           const QString &arguments,
-                                           const QString &workingDirectory,
-                                           const QString &steamAppID,
-                                           Executable::Flags mask,
-                                           Executable::Flags flags,
-                                           bool isUpdate)
+void  ExecutablesList::updateExecutable(const QString &title,
+                                        const QString &executableName,
+                                        const QString &arguments,
+                                        const QString &workingDirectory,
+                                        const QString &steamAppID,
+                                        Executable::Flags flags,
+                                        Executable::Flags mask)
+{
+  auto existingExe = findExe(title);
+  if (existingExe != m_Executables.end()) {
+    QFileInfo file(executableName);
+    if (! file.exists()) {
+      // don't overwrite a valid binary with an invalid one
+      file = existingExe->m_BinaryInfo;
+    }
+    //Should we do the same test as above for the working directory?
+    //Mark as custom if we've changed the run command.
+    if (! flags.testFlag(Executable::CustomExecutable)) {
+      if (existingExe->m_BinaryInfo != file ||
+          existingExe->m_Arguments != arguments ||
+          existingExe->m_WorkingDirectory != workingDirectory ||
+          existingExe->m_SteamAppID != steamAppID) {
+        flags |= Executable::CustomExecutable;
+        mask |= Executable::CustomExecutable;
+      }
+    }
+  }
+  updateExecutableInternal(title, executableName, arguments, workingDirectory,
+                           steamAppID, flags, mask);
+}
+
+void ExecutablesList::updateExecutableInternal(const QString &title,
+                                               const QString &executableName,
+                                               const QString &arguments,
+                                               const QString &workingDirectory,
+                                               const QString &steamAppID,
+                                               Executable::Flags flags,
+                                               Executable::Flags mask)
 {
   QFileInfo file(executableName);
   auto existingExe = findExe(title);
   flags &= mask;
 
   if (existingExe != m_Executables.end()) {
-    if (existingExe->closeConfigurationDisabled()) {
-      //Make sure this information doesn't get played with.
-      mask &= ~(Executable::CloseConfigurationDisabled | Executable::CloseOrganizerOnRun);
-    }
     if (! file.exists()) {
       // don't overwrite a valid binary with an invalid one
+      // this should probably be in the bit whre we read the config files as
+      // it's unnecessary anywhere else
       file = existingExe->m_BinaryInfo;
-    }
-    if (isUpdate && ! flags.testFlag(Executable::CustomExecutable))
-    {
-      //Mark as custom if we've changed the run command.
-      if (existingExe->m_BinaryInfo != file ||
-          existingExe->m_Arguments != arguments ||
-          existingExe->m_WorkingDirectory != workingDirectory ||
-          existingExe->m_SteamAppID != steamAppID) {
-        flags |= Executable::CustomExecutable;
-      }
     }
     existingExe->m_BinaryInfo = file;
     existingExe->m_Arguments = arguments;
@@ -172,14 +203,7 @@ void ExecutablesList::updateExecutableImpl(const QString &title,
     existingExe->m_Flags &= ~mask;
     existingExe->m_Flags |= flags;
   } else {
-    Executable newExe;
-    newExe.m_Title = title;
-    newExe.m_BinaryInfo = file;
-    newExe.m_Arguments = arguments;
-    newExe.m_WorkingDirectory = workingDirectory;
-    newExe.m_SteamAppID = steamAppID;
-    newExe.m_Flags = Executable::CustomExecutable | flags;
-    m_Executables.push_back(newExe);
+    addExecutableInternal(title, file, arguments, workingDirectory, steamAppID, Executable::CustomExecutable | flags);
   }
 }
 
@@ -194,23 +218,21 @@ void ExecutablesList::remove(const QString &title)
   }
 }
 
-
-void ExecutablesList::addExecutableInternal(const QString &title, const QString &executableName,
-                                            const QString &arguments, const QString &workingDirectory,
+void ExecutablesList::addExecutableInternal(const QString &title,
+                                            const QFileInfo &executable,
+                                            const QString &arguments,
+                                            const QString &workingDirectory,
                                             const QString &steamAppID,
                                             Executable::Flags flags)
 {
-  QFileInfo file(executableName);
-  if (file.exists()) {
-    Executable newExe;
-    newExe.m_BinaryInfo = file;
-    newExe.m_Title = title;
-    newExe.m_Arguments = arguments;
-    newExe.m_WorkingDirectory = workingDirectory;
-    newExe.m_SteamAppID = steamAppID;
-    newExe.m_Flags = flags;
-    m_Executables.push_back(newExe);
-  }
+  Executable newExe;
+  newExe.m_BinaryInfo = executable;
+  newExe.m_Title = title;
+  newExe.m_Arguments = arguments;
+  newExe.m_WorkingDirectory = workingDirectory;
+  newExe.m_SteamAppID = steamAppID;
+  newExe.m_Flags = flags;
+  m_Executables.push_back(newExe);
 }
 
 

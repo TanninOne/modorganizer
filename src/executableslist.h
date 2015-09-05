@@ -133,36 +133,41 @@ public:
    * @param title name displayed in the UI
    * @param executableName the actual filename to execute
    * @param arguments arguments to pass to the executable
-   * @param closeMO if true, MO will be closed when the binary is started
+   * @param workingDirectory directory in which to run
+   * @param steamAppID application ID for steam
+   * @param flags bits controlling how this interacts with MO
+   *
+   * Note if this title is already in the list, it will be overwritten
    **/
   void addExecutable(const QString &title,
                      const QString &executableName,
                      const QString &arguments,
                      const QString &workingDirectory,
                      const QString &steamAppID,
-                     Executable::Flags flags)
-  {
-    updateExecutableImpl(title, executableName, arguments, workingDirectory, steamAppID, Executable::AllFlags, flags, false);
-  }
+                     Executable::Flags flags);
 
   /**
-   * @brief Update an executable to the list
+   * @brief Update an executable in the list or add one to the list
    *
    * @param title name displayed in the UI
    * @param executableName the actual filename to execute
    * @param arguments arguments to pass to the executable
-   * @param closeMO if true, MO will be closed when the binary is started
+   * @param workingDirectory directory in which to run
+   * @param steamAppID application ID for steam
+   * @param flags switch on or off bits controlling how this interacts with MO
+   * @param mask to control which of the above bits are set on/off
+   *
+   * Note: If the title isn't marked as custom but you've changed anything apart
+   * from the flags, this will mark it as custom
    **/
   void updateExecutable(const QString &title,
                         const QString &executableName,
                         const QString &arguments,
                         const QString &workingDirectory,
                         const QString &steamAppID,
-                        Executable::Flags mask,
-                        Executable::Flags flags)
-  {
-    updateExecutableImpl(title, executableName, arguments, workingDirectory, steamAppID, mask, flags, true);
-  }
+                        Executable::Flags flags,
+                        Executable::Flags mask);
+
 
   /**
    * @brief remove the executable with the specified file name. This needs to be an absolute file path
@@ -199,18 +204,20 @@ private:
 
   std::vector<Executable>::iterator findExe(const QString &title);
 
-  void addExecutableInternal(const QString &title, const QString &executableName, const QString &arguments,
+  void addExecutableInternal(const QString &title,
+                             const QFileInfo &executable,
+                             const QString &arguments,
                              const QString &workingDirectory,
-                             const QString &steamAppID, Executable::Flags flags);
+                             const QString &steamAppID,
+                             Executable::Flags flags);
 
-  void updateExecutableImpl(const QString &title,
-                            const QString &executableName,
-                            const QString &arguments,
-                            const QString &workingDirectory,
-                            const QString &steamAppID,
-                            Executable::Flags mask,
-                            Executable::Flags flags,
-                            bool isUpdate);
+  void updateExecutableInternal(const QString &title,
+                                const QString &executableName,
+                                const QString &arguments,
+                                const QString &workingDirectory,
+                                const QString &steamAppID,
+                                Executable::Flags flags,
+                                Executable::Flags mask);
 
 private:
 
