@@ -30,8 +30,8 @@ along with Mod Organizer.  If not, see <http://www.gnu.org/licenses/>.
 
 namespace MOShared {
 
-Fallout3Info::Fallout3Info(const std::wstring &moDirectory, const std::wstring &moDataDirectory, const std::wstring &gameDirectory)
-  : GameInfo(moDirectory, moDataDirectory, gameDirectory)
+Fallout3Info::Fallout3Info(const std::wstring &gameDirectory)
+  : GameInfo(gameDirectory)
 {
   identifyMyGamesDirectory(L"fallout3");
 }
@@ -63,51 +63,17 @@ std::wstring Fallout3Info::getRegPathStatic()
 }
 
 
-std::vector<std::wstring> Fallout3Info::getDLCPlugins()
-{
-  return boost::assign::list_of (L"ThePitt.esm")
-                                (L"Anchorage.esm")
-                                (L"BrokenSteel.esm")
-                                (L"PointLookout.esm")
-                                (L"Zeta.esm")
-      ;
-}
-
-std::vector<std::wstring> Fallout3Info::getSavegameAttachmentExtensions()
-{
-  return std::vector<std::wstring>();
-}
-
-std::vector<std::wstring> Fallout3Info::getIniFileNames()
+std::vector<std::wstring> Fallout3Info::getIniFileNames() const
 {
   return boost::assign::list_of(L"fallout.ini")(L"falloutprefs.ini");
 }
 
-std::wstring Fallout3Info::getReferenceDataFile()
+std::wstring Fallout3Info::getReferenceDataFile() const
 {
   return L"Fallout - Meshes.bsa";
 }
 
-std::wstring Fallout3Info::getNexusPage(bool nmmScheme)
-{
-  if (nmmScheme) {
-    return L"http://nmm.nexusmods.com/fallout3";
-  } else {
-    return L"http://www.nexusmods.com/fallout3";
-  }
-}
-
-std::wstring Fallout3Info::getNexusInfoUrlStatic()
-{
-  return L"http://nmm.nexusmods.com/fallout3";
-}
-
-int Fallout3Info::getNexusModIDStatic()
-{
-  return 16348;
-}
-
-bool Fallout3Info::rerouteToProfile(const wchar_t *fileName, const wchar_t*)
+bool Fallout3Info::rerouteToProfile(const wchar_t *fileName, const wchar_t*) const
 {
   static LPCWSTR profileFiles[] = { L"fallout.ini", L"falloutprefs.ini", L"plugins.txt", nullptr };
 

@@ -70,7 +70,6 @@ SOURCES += \
     moapplication.cpp \
     profileinputdialog.cpp \
     icondelegate.cpp \
-    gameinfoimpl.cpp \
     csvbuilder.cpp \
     savetextasdialog.cpp \
     qtgroupingproxy.cpp \
@@ -91,7 +90,12 @@ SOURCES += \
     organizerproxy.cpp \
     viewmarkingscrollbar.cpp \
     plugincontainer.cpp \
-    organizercore.cpp
+    organizercore.cpp \
+    modinfowithconflictinfo.cpp \
+    modinforegular.cpp \
+    modinfobackup.cpp \
+    modinfooverwrite.cpp \
+    modinfoforeign.cpp
 
 
 HEADERS  += \
@@ -145,7 +149,6 @@ HEADERS  += \
     moapplication.h \
     profileinputdialog.h \
     icondelegate.h \
-    gameinfoimpl.h \
     csvbuilder.h \
     savetextasdialog.h \
     qtgroupingproxy.h \
@@ -167,7 +170,12 @@ HEADERS  += \
     viewmarkingscrollbar.h \
     plugincontainer.h \
     organizercore.h \
-    iuserinterface.h
+    iuserinterface.h \
+    modinfowithconflictinfo.h \
+    modinforegular.h \
+    modinfobackup.h \
+    modinfooverwrite.h \
+    modinfoforeign.h
 
 FORMS    += \
     transfersavesdialog.ui \
@@ -233,6 +241,10 @@ OTHER_FILES += \
 INCLUDEPATH += "E:/Visual Leak Detector/include"
 LIBS += -L"E:/Visual Leak Detector/lib/Win32"
 #DEFINES += LEAK_CHECK_WITH_VLD
+
+#########################FUDGE###############################
+INCLUDEPATH += ../plugins/gameGamebryo
+#############################################################
 
 # custom leak detection
 #LIBS += -lDbgHelp
@@ -310,7 +322,9 @@ DEFINES += UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS _SCL_SECURE_NO_WARNINGS NOMI
 DEFINES += BOOST_DISABLE_ASSERTS NDEBUG QT_MESSAGELOGCONTEXT
 #DEFINES += QMLJSDEBUGGER
 
-HGID = 'nothing'
+# If we are running mercurial get the build ID from that. If we aren't, at least
+# don't generate a strange message whenever you open the project
+HGID = $$system(if exist $OUT_PWD\\..\\.hg (hg id -i) else (echo 'Unknown'))
 DEFINES += HGID=\\\"$${HGID}\\\"
 
 CONFIG(debug, debug|release) {
@@ -353,10 +367,10 @@ CONFIG(debug, debug|release) {
 }
 
 OTHER_FILES += \
-    SConscript
+    SConscript \
+    CMakeLists.txt
 
 DISTFILES += \
     tutorials/tutorial_primer_main.js \
     tutorials/Tooltip.qml \
-    tutorials/TooltipArea.qml \
-    SConscript
+    tutorials/TooltipArea.qml
