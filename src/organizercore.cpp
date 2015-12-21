@@ -34,7 +34,6 @@
 using namespace MOShared;
 using namespace MOBase;
 
-
 static bool isOnline()
 {
   QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
@@ -231,11 +230,11 @@ QSettings::Status OrganizerCore::storeSettings(const QString &fileName)
     settings.setValue("custom", item.isCustom());
     settings.setValue("toolbar", item.isShownOnToolbar());
     settings.setValue("ownicon", item.usesOwnIcon());
+    settings.setValue("closeOnStart", item.closeOrganizerOnRun());
     if (item.isCustom()) {
       settings.setValue("binary", item.m_BinaryInfo.absoluteFilePath());
       settings.setValue("arguments", item.m_Arguments);
       settings.setValue("workingDirectory", item.m_WorkingDirectory);
-      settings.setValue("closeOnStart", item.m_CloseMO == ExecutableInfo::CloseMOStyle::DEFAULT_CLOSE);
       settings.setValue("steamAppID", item.m_SteamAppID);
     }
   }
@@ -335,21 +334,47 @@ void OrganizerCore::updateExecutablesList(QSettings &settings)
   int numCustomExecutables = settings.beginReadArray("customExecutables");
   for (int i = 0; i < numCustomExecutables; ++i) {
     settings.setArrayIndex(i);
-    ExecutableInfo::CloseMOStyle closeMO =
-        settings.value("closeOnStart").toBool() ? ExecutableInfo::CloseMOStyle::DEFAULT_CLOSE
-                                                : ExecutableInfo::CloseMOStyle::DEFAULT_STAY;
 
     Executable::Flags flags;
     if (settings.value("custom", true).toBool())   flags |= Executable::CustomExecutable;
     if (settings.value("toolbar", false).toBool()) flags |= Executable::ShowInToolbar;
     if (settings.value("ownicon", false).toBool()) flags |= Executable::UseApplicationIcon;
+    if (settings.value("closeOnStart", false).toBool()) flags |= Executable::CloseOrganizerOnRun;
 
-    m_ExecutablesList.addExecutable(settings.value("title").toString(),
-                                    settings.value("binary").toString(),
-                                    settings.value("arguments").toString(),
-                                    settings.value("workingDirectory", "").toString(),
-                                    closeMO,
-                                    settings.value("steamAppID", "").toString(),
+    //Non-custom executables don't store their binary, args, directory or steam app id
+    //settings, so use them as the default.
+
+    QString default_binary = "";
+    QString default_args = "";
+    QString default_dir = "";
+    QString default_app_id = "";
+
+    QString title = settings.value("title").toString();
+    if (m_ExecutablesList.titleExists(title)) {
+      Executable const &def = m_ExecutablesList.find(title);
+      default_binary = def.m_BinaryInfo.absoluteFilePath();
+      default_args = def.m_Arguments;
+      default_dir = def.m_WorkingDirectory;
+      default_app_id = def.m_SteamAppID;
+      //What about flags?
+      if (def.closeConfigurationDisabled()) {
+        //Make sure the close settings are set appropriately if you're not allowed
+        //to set them. YMMV as to whether this makes sense if someone has customised
+        //this
+        flags |= Executable::CloseConfigurationDisabled;
+        if (def.closeOrganizerOnRun()) {
+          flags |= Executable::CloseOrganizerOnRun;
+        } else {
+          flags &= ~Executable::CloseOrganizerOnRun;
+        }
+      }
+    }
+
+    m_ExecutablesList.addExecutable(title,
+                                    settings.value("binary", default_binary).toString(),
+                                    settings.value("arguments", default_args).toString(),
+                                    settings.value("workingDirectory", default_dir).toString(),
+                                    settings.value("steamAppID", default_app_id).toString(),
                                     flags);
   }
 
@@ -865,6 +890,17 @@ PluginList *OrganizerCore::pluginList()
 ModList *OrganizerCore::modList()
 {
   return &m_ModList;
+}
+
+void OrganizerCore::spawnBinary(Executable const &executable)
+{
+  spawnBinary(
+      executable.m_BinaryInfo,
+      executable.m_Arguments,
+      executable.m_WorkingDirectory.length() != 0 ? executable.m_WorkingDirectory
+                                                  : executable.m_BinaryInfo.absolutePath(),
+      executable.closeOrganizerOnRun(),
+      executable.m_SteamAppID);
 }
 
 void OrganizerCore::spawnBinary(const QFileInfo &binary, const QString &arguments, const QDir &currentDirectory, bool closeAfterStart, const QString &steamAppID)
